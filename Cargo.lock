@@ -146,6 +146,10 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 [[package]]
 name = "app-aggregator"
 version = "0.1.0"
+dependencies = [
+ "app-common",
+ "serde_json",
+]
 
 [[package]]
 name = "app-common"
