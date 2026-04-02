@@ -18,7 +18,7 @@ pub enum CoreError {
     #[error("传输层错误：{0}")]
     Transport(#[from] app_transport::TransportError),
     #[error("随机数生成失败：{0}")]
-    Random(#[from] getrandom::Error),
+    Random(String),
     #[error("插件已安装：{0}")]
     PluginAlreadyInstalled(String),
     #[error("配置校验失败：{0}")]
@@ -51,5 +51,11 @@ impl CoreError {
             | Self::SubscriptionFetch(_) => "E_INTERNAL",
             Self::Transport(error) => error.code(),
         }
+    }
+}
+
+impl From<getrandom::Error> for CoreError {
+    fn from(error: getrandom::Error) -> Self {
+        Self::Random(error.to_string())
     }
 }
