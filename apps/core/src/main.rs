@@ -1,4 +1,3 @@
-use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::net::SocketAddr;
@@ -6,25 +5,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use app_common::{AppSetting, ErrorResponse};
+use app_common::AppSetting;
 use app_http_server::{ApiEvent, ServerContext, build_router as build_http_router};
 use app_secrets::{
     EnvSecretStore, FileSecretStore, KeyringSecretStore, MemorySecretStore, SecretStore,
 };
-use app_storage::{Database, SettingsRepository, StorageError};
-use axum::Router;
-use axum::body::Body;
-use axum::extract::State;
-use axum::http::{Request, StatusCode, header::AUTHORIZATION, header::HOST};
-use axum::middleware::{self, Next};
-use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use app_storage::{Database, SettingsRepository};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use fs2::FileExt;
 use rand::Rng;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -120,43 +112,6 @@ struct RefreshArgs {
     source_id: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-struct HostValidationState {
-    allowed_hosts: Arc<HashSet<String>>,
-}
-
-impl HostValidationState {
-    fn new(port: u16) -> Self {
-        let mut hosts = HashSet::new();
-        for host in ["127.0.0.1", "localhost", "[::1]"] {
-            hosts.insert(host.to_string());
-            hosts.insert(format!("{host}:{port}"));
-        }
-
-        Self {
-            allowed_hosts: Arc::new(hosts),
-        }
-    }
-
-    fn is_allowed(&self, host_header: &str) -> bool {
-        self.allowed_hosts.contains(host_header)
-    }
-}
-
-#[derive(Clone)]
-struct AppState {
-    admin_token: Arc<String>,
-    database: Arc<Database>,
-    _secret_backend: SecretBackendKind,
-    _secret_store: Arc<dyn SecretStore>,
-}
-
-#[derive(Debug, Serialize)]
-struct HealthResponse {
-    status: &'static str,
-    version: &'static str,
-}
-
 #[derive(Debug, Serialize)]
 struct GuiBootstrap {
     version: &'static str,
@@ -165,19 +120,6 @@ struct GuiBootstrap {
     admin_token: String,
     secrets_backend: &'static str,
 }
-
-#[derive(Debug, Serialize)]
-struct SettingsResponse {
-    settings: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateSettingsRequest {
-    settings: BTreeMap<String, String>,
-}
-
-type ApiResult<T> =
-    std::result::Result<(StatusCode, axum::Json<T>), (StatusCode, axum::Json<ErrorResponse>)>;
 
 #[tokio::main]
 async fn main() {
@@ -301,104 +243,6 @@ fn run_refresh(args: RefreshArgs) -> Result<()> {
         println!("收到全量刷新请求（功能将在后续阶段实现）");
     }
     Ok(())
-}
-
-async fn health_handler() -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        axum::Json(HealthResponse {
-            status: "ok",
-            version: APP_VERSION,
-        }),
-    )
-}
-
-async fn get_system_settings_handler(State(state): State<AppState>) -> ApiResult<SettingsResponse> {
-    let repository = SettingsRepository::new(state.database.as_ref());
-    let settings = repository.get_all().map_err(storage_error_to_response)?;
-
-    Ok((
-        StatusCode::OK,
-        axum::Json(SettingsResponse {
-            settings: map_settings(settings),
-        }),
-    ))
-}
-
-async fn update_system_settings_handler(
-    State(state): State<AppState>,
-    axum::Json(payload): axum::Json<UpdateSettingsRequest>,
-) -> ApiResult<SettingsResponse> {
-    if payload.settings.is_empty() {
-        return Err(config_error_response("请求体 settings 不能为空"));
-    }
-
-    let updated_at = current_timestamp_rfc3339().map_err(|error| {
-        eprintln!("ERROR: 生成时间戳失败: {error:#}");
-        internal_error_response()
-    })?;
-
-    let repository = SettingsRepository::new(state.database.as_ref());
-    for (key, value) in payload.settings {
-        if key.trim().is_empty() {
-            return Err(config_error_response("设置键不能为空"));
-        }
-
-        repository
-            .set(&AppSetting {
-                key,
-                value,
-                updated_at: updated_at.clone(),
-            })
-            .map_err(storage_error_to_response)?;
-    }
-
-    let settings = repository.get_all().map_err(storage_error_to_response)?;
-    Ok((
-        StatusCode::OK,
-        axum::Json(SettingsResponse {
-            settings: map_settings(settings),
-        }),
-    ))
-}
-
-async fn admin_auth_middleware(
-    State(state): State<AppState>,
-    request: Request<Body>,
-    next: Next,
-) -> Response {
-    let valid = request
-        .headers()
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(parse_bearer_token)
-        .is_some_and(|token| token == state.admin_token.as_str());
-
-    if !valid {
-        return unauthorized_error_response().into_response();
-    }
-
-    next.run(request).await
-}
-
-async fn host_validation_middleware(
-    State(state): State<HostValidationState>,
-    request: Request<Body>,
-    next: Next,
-) -> Response {
-    let host = request
-        .headers()
-        .get(HOST)
-        .and_then(|value| value.to_str().ok())
-        .map(normalize_host)
-        .unwrap_or_default();
-
-    if !state.is_allowed(&host) {
-        let body = ErrorResponse::new("E_AUTH", "Forbidden: invalid Host header", false);
-        return (StatusCode::FORBIDDEN, axum::Json(body)).into_response();
-    }
-
-    next.run(request).await
 }
 
 async fn shutdown_signal() {
@@ -567,20 +411,6 @@ fn current_timestamp_rfc3339() -> Result<String> {
         .context("格式化 RFC3339 时间戳失败")
 }
 
-fn map_settings(settings: Vec<AppSetting>) -> BTreeMap<String, String> {
-    settings
-        .into_iter()
-        .map(|setting| (setting.key, setting.value))
-        .collect()
-}
-
-fn parse_bearer_token(header_value: &str) -> Option<&str> {
-    let trimmed = header_value.trim();
-    let token = trimmed.strip_prefix("Bearer ")?;
-    let token = token.trim();
-    if token.is_empty() { None } else { Some(token) }
-}
-
 fn normalize_host(raw: &str) -> String {
     raw.trim().to_ascii_lowercase()
 }
@@ -590,36 +420,6 @@ fn is_loopback_host(host: &str) -> bool {
         normalize_host(host).as_str(),
         "127.0.0.1" | "localhost" | "::1"
     )
-}
-
-fn unauthorized_error_response() -> (StatusCode, axum::Json<ErrorResponse>) {
-    (
-        StatusCode::UNAUTHORIZED,
-        axum::Json(ErrorResponse::new("E_AUTH", "Unauthorized", false)),
-    )
-}
-
-fn config_error_response(message: &str) -> (StatusCode, axum::Json<ErrorResponse>) {
-    (
-        StatusCode::BAD_REQUEST,
-        axum::Json(ErrorResponse::new("E_CONFIG_INVALID", message, false)),
-    )
-}
-
-fn internal_error_response() -> (StatusCode, axum::Json<ErrorResponse>) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        axum::Json(ErrorResponse::new(
-            "E_INTERNAL",
-            "Internal server error",
-            true,
-        )),
-    )
-}
-
-fn storage_error_to_response(error: StorageError) -> (StatusCode, axum::Json<ErrorResponse>) {
-    eprintln!("ERROR: 存储层操作失败: {error:#}");
-    internal_error_response()
 }
 
 fn set_owner_only_file_permissions(path: &Path) -> Result<()> {
@@ -695,39 +495,9 @@ fn run_icacls(target: &str, args: &[&str]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        HostValidationState, parse_bearer_token, run_refresh, set_default_setting_if_absent,
-    };
+    use super::{run_refresh, set_default_setting_if_absent};
     use app_common::AppSetting;
     use app_storage::{Database, SettingsRepository, StorageResult};
-
-    #[test]
-    fn host_validation_allows_loopback_hosts_for_custom_port() {
-        let state = HostValidationState::new(19123);
-
-        assert!(state.is_allowed("127.0.0.1"));
-        assert!(state.is_allowed("127.0.0.1:19123"));
-        assert!(state.is_allowed("localhost:19123"));
-        assert!(state.is_allowed("[::1]:19123"));
-    }
-
-    #[test]
-    fn host_validation_rejects_non_loopback_hosts() {
-        let state = HostValidationState::new(18118);
-
-        assert!(!state.is_allowed("0.0.0.0"));
-        assert!(!state.is_allowed("0.0.0.0:18118"));
-        assert!(!state.is_allowed("evil.com"));
-    }
-
-    #[test]
-    fn bearer_token_parser_works() {
-        assert_eq!(parse_bearer_token("Bearer abc"), Some("abc"));
-        assert_eq!(parse_bearer_token("Bearer    abc"), Some("abc"));
-        assert_eq!(parse_bearer_token("bearer abc"), None);
-        assert_eq!(parse_bearer_token("Bearer "), None);
-        assert_eq!(parse_bearer_token("abc"), None);
-    }
 
     #[test]
     fn set_default_setting_only_writes_when_missing() -> StorageResult<()> {
