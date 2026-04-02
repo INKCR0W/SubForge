@@ -57,7 +57,27 @@ pub type TransportResult<T> = Result<T, TransportError>;
 
 pub trait TransportProfile: Send + Sync + std::fmt::Debug {
     fn profile_name(&self) -> &'static str;
-    fn build_client(&self) -> TransportResult<Client>;
+    fn timeout(&self) -> Duration;
+    fn max_redirects(&self) -> usize;
+    fn default_user_agent(&self) -> &'static str;
+    fn uses_cookie_store(&self) -> bool {
+        false
+    }
+    fn build_client(&self) -> TransportResult<Client> {
+        self.build_client_with_limits(self.timeout(), self.max_redirects())
+    }
+    fn build_client_with_limits(
+        &self,
+        timeout: Duration,
+        max_redirects: usize,
+    ) -> TransportResult<Client> {
+        build_client_with_settings(
+            timeout,
+            max_redirects,
+            self.default_user_agent(),
+            self.uses_cookie_store(),
+        )
+    }
     fn request_delay(&self) -> Duration;
     fn default_headers(&self) -> &[(&'static str, &'static str)] {
         &EMPTY_HEADER_TEMPLATE
@@ -95,14 +115,16 @@ impl TransportProfile for StandardProfile {
         "standard"
     }
 
-    fn build_client(&self) -> TransportResult<Client> {
-        let client = Client::builder()
-            .redirect(Policy::limited(self.max_redirects))
-            .timeout(self.timeout)
-            .user_agent(self.default_user_agent)
-            .danger_accept_invalid_certs(false)
-            .build()?;
-        Ok(client)
+    fn timeout(&self) -> Duration {
+        self.timeout
+    }
+
+    fn max_redirects(&self) -> usize {
+        self.max_redirects
+    }
+
+    fn default_user_agent(&self) -> &'static str {
+        self.default_user_agent
     }
 
     fn request_delay(&self) -> Duration {
@@ -136,15 +158,20 @@ impl TransportProfile for BrowserChromeProfile {
         "browser_chrome"
     }
 
-    fn build_client(&self) -> TransportResult<Client> {
-        let client = Client::builder()
-            .redirect(Policy::limited(self.max_redirects))
-            .timeout(self.timeout)
-            .user_agent(self.default_user_agent)
-            .cookie_store(true)
-            .danger_accept_invalid_certs(false)
-            .build()?;
-        Ok(client)
+    fn timeout(&self) -> Duration {
+        self.timeout
+    }
+
+    fn max_redirects(&self) -> usize {
+        self.max_redirects
+    }
+
+    fn default_user_agent(&self) -> &'static str {
+        self.default_user_agent
+    }
+
+    fn uses_cookie_store(&self) -> bool {
+        true
     }
 
     fn request_delay(&self) -> Duration {
@@ -179,6 +206,24 @@ impl NetworkProfileFactory {
             _ => Err(TransportError::UnsupportedProfile(profile.to_string())),
         }
     }
+}
+
+fn build_client_with_settings(
+    timeout: Duration,
+    max_redirects: usize,
+    user_agent: &'static str,
+    use_cookie_store: bool,
+) -> TransportResult<Client> {
+    let mut builder = Client::builder()
+        .redirect(Policy::limited(max_redirects))
+        .timeout(timeout)
+        .user_agent(user_agent)
+        .danger_accept_invalid_certs(false);
+    if use_cookie_store {
+        builder = builder.cookie_store(true);
+    }
+    let client = builder.build()?;
+    Ok(client)
 }
 
 #[cfg(test)]

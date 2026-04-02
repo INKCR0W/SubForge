@@ -201,9 +201,15 @@ name = "app-plugin-runtime"
 version = "0.1.0"
 dependencies = [
  "app-common",
+ "app-transport",
+ "base64 0.22.1",
  "mlua",
+ "reqwest",
+ "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "time",
+ "tokio",
 ]
 
 [[package]]
