@@ -1,0 +1,10 @@
+pub(crate) const REDACTED: &str = "***REDACTED***";
+pub(crate) const FILE_FORMAT_VERSION: u8 = 1;
+pub(crate) const FILE_SALT_LEN: usize = 16;
+pub(crate) const FILE_NONCE_LEN: usize = 12;
+pub(crate) const FILE_TAG_LEN: usize = 16;
+pub(crate) const ARGON2_MEMORY_KIB: u32 = 64 * 1024;
+pub(crate) const ARGON2_ITERATIONS: u32 = 3;
+pub(crate) const ARGON2_PARALLELISM: u32 = 1;
+pub(crate) const KEYRING_SERVICE: &str = "subforge";
+pub(crate) const KEYRING_INDEX_KEY: &str = "__keys__";
