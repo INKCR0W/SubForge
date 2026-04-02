@@ -7,5 +7,9 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["cookies"] }
 thiserror.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+tokio.workspace = true

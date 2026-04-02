@@ -16,19 +16,20 @@ use app_storage::{
     Database, ExportToken, ExportTokenRepository, NodeCacheRepository, PluginRepository,
     RefreshJob, RefreshJobRepository, SourceConfigRepository, SourceRepository, StorageError,
 };
-use app_transport::NetworkProfileFactory;
+use app_transport::{NetworkProfileFactory, TransportProfile};
 use base64::Engine as Base64Engine;
 use base64::engine::general_purpose::{
     STANDARD as BASE64_STANDARD, STANDARD_NO_PAD as BASE64_STANDARD_NO_PAD,
     URL_SAFE as BASE64_URL_SAFE, URL_SAFE_NO_PAD as BASE64_URL_SAFE_NO_PAD,
 };
 use regex::Regex;
-use reqwest::header::{CONTENT_TYPE, HeaderMap, USER_AGENT};
+use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, USER_AGENT};
 use reqwest::{Client as HttpClient, Url};
 use serde_json::Value;
 use thiserror::Error;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use tokio::time::sleep;
 
 const SECRET_PLACEHOLDER: &str = "••••••";
 const MAX_SUBSCRIPTION_BYTES: usize = 10 * 1024 * 1024;
@@ -124,6 +125,7 @@ pub struct StaticFetcher<'a, P: SubscriptionParser = UriListParser> {
     db: &'a Database,
     parser: P,
     client: HttpClient,
+    transport_profile: Box<dyn TransportProfile>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,7 +196,12 @@ where
         let transport_profile = NetworkProfileFactory::create(network_profile)?;
         let client = transport_profile.build_client()?;
 
-        Ok(Self { db, parser, client })
+        Ok(Self {
+            db,
+            parser,
+            client,
+            transport_profile,
+        })
     }
 
     pub async fn fetch_and_cache(
@@ -210,34 +217,37 @@ where
 
         let url = Url::parse(subscription_url)
             .map_err(|error| CoreError::ConfigInvalid(format!("订阅 URL 非法：{error}")))?;
-        let mut headers = HeaderMap::new();
-        if let Some(user_agent) = user_agent {
-            let user_agent = user_agent.trim();
-            if !user_agent.is_empty() {
-                headers.insert(
-                    USER_AGENT,
-                    user_agent.parse().map_err(|error| {
-                        CoreError::ConfigInvalid(format!("user_agent 非法：{error}"))
-                    })?,
-                );
+        let headers = self.build_request_headers(user_agent)?;
+
+        let mut retry_attempt = 0usize;
+        let response = loop {
+            if retry_attempt > 0 {
+                let backoff = retry_backoff(self.transport_profile.request_delay(), retry_attempt);
+                sleep(backoff).await;
             }
-        }
+            let response = self
+                .client
+                .get(url.clone())
+                .headers(headers.clone())
+                .send()
+                .await
+                .map_err(|error| CoreError::SubscriptionFetch(error.to_string()))?;
 
-        let response = self
-            .client
-            .get(url)
-            .headers(headers)
-            .send()
-            .await
-            .map_err(|error| CoreError::SubscriptionFetch(error.to_string()))?;
-
-        let status = response.status();
-        if !status.is_success() {
+            let status = response.status();
+            if status.is_success() {
+                break response;
+            }
+            if retry_attempt < self.transport_profile.max_retries()
+                && self.transport_profile.is_retryable_status(status)
+            {
+                retry_attempt += 1;
+                continue;
+            }
             return Err(CoreError::SubscriptionFetch(format!(
                 "上游响应状态码异常：{}",
                 status.as_u16()
             )));
-        }
+        };
 
         validate_content_type(response.headers())?;
         if let Some(content_length) = response.content_length() {
@@ -271,6 +281,33 @@ where
         cache_repository.upsert_nodes(source_instance_id, &nodes, &now, None)?;
 
         Ok(nodes)
+    }
+
+    fn build_request_headers(&self, user_agent: Option<&str>) -> CoreResult<HeaderMap> {
+        let mut headers = HeaderMap::new();
+        for (name, value) in self.transport_profile.default_headers() {
+            let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
+                CoreError::ConfigInvalid(format!("传输层默认 Header 名非法（{name}）：{error}"))
+            })?;
+            let header_value = HeaderValue::from_str(value).map_err(|error| {
+                CoreError::ConfigInvalid(format!("传输层默认 Header 值非法（{name}）：{error}"))
+            })?;
+            headers.insert(header_name, header_value);
+        }
+
+        if let Some(user_agent) = user_agent {
+            let user_agent = user_agent.trim();
+            if !user_agent.is_empty() {
+                headers.insert(
+                    USER_AGENT,
+                    user_agent.parse().map_err(|error| {
+                        CoreError::ConfigInvalid(format!("user_agent 非法：{error}"))
+                    })?,
+                );
+            }
+        }
+
+        Ok(headers)
     }
 }
 
@@ -835,6 +872,16 @@ fn masked_config(
         }
     }
     result
+}
+
+fn retry_backoff(base_delay: std::time::Duration, retry_attempt: usize) -> std::time::Duration {
+    let base_delay = if base_delay.is_zero() {
+        std::time::Duration::from_millis(100)
+    } else {
+        base_delay
+    };
+    let shift = retry_attempt.saturating_sub(1).min(16);
+    base_delay.saturating_mul(1_u32 << shift)
 }
 
 fn validate_content_type(headers: &HeaderMap) -> CoreResult<()> {
@@ -1445,7 +1492,9 @@ mod tests {
     use std::fs;
     use std::net::SocketAddr;
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use app_common::ProxyProtocol;
     use app_secrets::{MemorySecretStore, SecretStore};
@@ -1454,6 +1503,7 @@ mod tests {
         RefreshJobRepository, SourceConfigRepository, SourceRepository,
     };
     use axum::Router;
+    use axum::http::StatusCode;
     use axum::routing::get;
     use serde_json::{Value, json};
     use tokio::net::TcpListener;
@@ -1771,6 +1821,40 @@ mod tests {
         server_task.abort();
     }
 
+    #[tokio::test]
+    async fn static_fetcher_browser_chrome_retries_on_429_then_succeeds() {
+        let db = Database::open_in_memory().expect("内存数据库初始化失败");
+        let source_repository = SourceRepository::new(&db);
+        source_repository
+            .insert(&sample_source("source-fetch-3", "subforge.builtin.static"))
+            .expect("写入来源实例失败");
+
+        let (url, request_count, server_task) = start_retry_fixture_server(
+            "/sub",
+            vec![429, 429],
+            BASE64_SUBSCRIPTION_FIXTURE.trim().to_string(),
+            "text/plain; charset=utf-8",
+        )
+        .await;
+
+        let fetcher = StaticFetcher::new_with_network_profile(&db, "browser_chrome")
+            .expect("初始化 browser_chrome StaticFetcher 失败");
+        let started = Instant::now();
+        let nodes = fetcher
+            .fetch_and_cache("source-fetch-3", &format!("{url}/sub"), None)
+            .await
+            .expect("429 重试后应成功");
+
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(request_count.load(Ordering::SeqCst), 3);
+        assert!(
+            started.elapsed() >= Duration::from_millis(1400),
+            "退避总时长应至少接近 500ms + 1000ms"
+        );
+
+        server_task.abort();
+    }
+
     #[test]
     fn static_fetcher_rejects_unknown_network_profile() {
         let db = Database::open_in_memory().expect("内存数据库初始化失败");
@@ -1985,6 +2069,61 @@ mod tests {
         });
 
         (base_url, task)
+    }
+
+    async fn start_retry_fixture_server(
+        route_path: &'static str,
+        retry_statuses: Vec<u16>,
+        success_body: String,
+        content_type: &'static str,
+    ) -> (String, Arc<AtomicUsize>, JoinHandle<()>) {
+        let retry_statuses = Arc::new(retry_statuses);
+        let request_count = Arc::new(AtomicUsize::new(0));
+
+        let app = Router::new().route(
+            route_path,
+            get({
+                let retry_statuses = retry_statuses.clone();
+                let request_count = request_count.clone();
+                move || {
+                    let retry_statuses = retry_statuses.clone();
+                    let request_count = request_count.clone();
+                    let success_body = success_body.clone();
+                    async move {
+                        let current = request_count.fetch_add(1, Ordering::SeqCst);
+                        if current < retry_statuses.len() {
+                            let status = StatusCode::from_u16(retry_statuses[current])
+                                .expect("状态码必须合法");
+                            (
+                                status,
+                                [(axum::http::header::CONTENT_TYPE, content_type)],
+                                "retry".to_string(),
+                            )
+                        } else {
+                            (
+                                StatusCode::OK,
+                                [(axum::http::header::CONTENT_TYPE, content_type)],
+                                success_body,
+                            )
+                        }
+                    }
+                }
+            }),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("启动测试 HTTP 服务失败");
+        let address: SocketAddr = listener.local_addr().expect("读取监听地址失败");
+        let base_url = format!("http://{}", address);
+
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("测试 HTTP 服务运行失败");
+        });
+
+        (base_url, request_count, task)
     }
 
     fn cleanup_dir(path: &Path) {
