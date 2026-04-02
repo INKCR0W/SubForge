@@ -57,6 +57,8 @@ pub enum ProxyProtocol {
     Vmess,
     Vless,
     Trojan,
+    Hysteria2,
+    Tuic,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]

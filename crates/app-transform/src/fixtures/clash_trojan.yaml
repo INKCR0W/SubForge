@@ -1,0 +1,29 @@
+proxies:
+- name: TROJAN-JP
+  type: trojan
+  server: trojan-jp.example.com
+  port: 443
+  password: trojan-pass
+  udp: true
+  tls: true
+  sni: tls.example.com
+  servername: tls.example.com
+  network: tcp
+proxy-groups:
+- name: Select
+  type: select
+  proxies:
+  - Auto
+  - JP
+  - TROJAN-JP
+- name: Auto
+  type: url-test
+  proxies:
+  - TROJAN-JP
+  url: http://www.gstatic.com/generate_204
+  interval: 300
+  tolerance: 50
+- name: JP
+  type: select
+  proxies:
+  - TROJAN-JP

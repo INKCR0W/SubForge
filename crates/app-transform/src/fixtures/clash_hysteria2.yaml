@@ -1,0 +1,32 @@
+proxies:
+- name: HY2-HK
+  type: hysteria2
+  server: hy2-hk.example.com
+  port: 443
+  password: hy2-pass
+  udp: true
+  tls: true
+  sni: tls.example.com
+  servername: tls.example.com
+  alpn:
+  - h3
+  obfs: salamander
+  obfs-password: hy2-obfs
+proxy-groups:
+- name: Select
+  type: select
+  proxies:
+  - Auto
+  - HK
+  - HY2-HK
+- name: Auto
+  type: url-test
+  proxies:
+  - HY2-HK
+  url: http://www.gstatic.com/generate_204
+  interval: 300
+  tolerance: 50
+- name: HK
+  type: select
+  proxies:
+  - HY2-HK

@@ -1,0 +1,27 @@
+proxies:
+- name: SS-HK
+  type: ss
+  server: ss-hk.example.com
+  port: 443
+  cipher: aes-128-gcm
+  password: p@ss
+  udp: true
+  network: tcp
+proxy-groups:
+- name: Select
+  type: select
+  proxies:
+  - Auto
+  - HK
+  - SS-HK
+- name: Auto
+  type: url-test
+  proxies:
+  - SS-HK
+  url: http://www.gstatic.com/generate_204
+  interval: 300
+  tolerance: 50
+- name: HK
+  type: select
+  proxies:
+  - SS-HK
