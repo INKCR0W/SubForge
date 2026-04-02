@@ -8,5 +8,6 @@ publish.workspace = true
 
 [dependencies]
 app-common = { path = "../app-common" }
+mlua = { version = "^0.11", features = ["lua54", "vendored", "serialize", "send"] }
 serde_json.workspace = true
 thiserror.workspace = true
