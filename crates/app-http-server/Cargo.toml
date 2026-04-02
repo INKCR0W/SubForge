@@ -7,4 +7,19 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+app-common = { path = "../app-common" }
+app-core = { path = "../app-core" }
+app-secrets = { path = "../app-secrets" }
+app-storage = { path = "../app-storage" }
+axum = { workspace = true, features = ["multipart"] }
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+tokio-stream = { version = "^0.1", features = ["sync"] }
+zip = "^2.2"
+tempfile = "^3.13"
+rusqlite.workspace = true
 
+[dev-dependencies]
+tower = { version = "^0.5", features = ["util"] }

@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use app_common::{AppSetting, ErrorResponse};
+use app_http_server::{ApiEvent, ServerContext, build_router as build_http_router};
 use app_secrets::{
     EnvSecretStore, FileSecretStore, KeyringSecretStore, MemorySecretStore, SecretStore,
 };
@@ -226,32 +227,15 @@ async fn run_server(args: RunArgs) -> Result<()> {
         );
     }
 
-    let app_state = AppState {
-        admin_token: Arc::new(admin_token.clone()),
-        database,
-        _secret_backend: secret_backend,
-        _secret_store: secret_store,
-    };
-    let host_state = HostValidationState::new(args.port);
-
-    let api_router = Router::new()
-        .route(
-            "/system/settings",
-            get(get_system_settings_handler).put(update_system_settings_handler),
-        )
-        .layer(middleware::from_fn_with_state(
-            app_state.clone(),
-            admin_auth_middleware,
-        ))
-        .with_state(app_state.clone());
-
-    let app = Router::new()
-        .route("/health", get(health_handler))
-        .nest("/api", api_router)
-        .layer(middleware::from_fn_with_state(
-            host_state,
-            host_validation_middleware,
-        ));
+    let (event_sender, _event_receiver) = tokio::sync::broadcast::channel::<ApiEvent>(256);
+    let app = build_http_router(ServerContext::new(
+        admin_token.clone(),
+        Arc::clone(&database),
+        Arc::clone(&secret_store),
+        data_dir.join("plugins"),
+        args.port,
+        event_sender,
+    ));
 
     if args.gui_mode {
         let bootstrap = GuiBootstrap {

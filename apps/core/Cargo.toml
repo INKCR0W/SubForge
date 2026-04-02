@@ -20,3 +20,4 @@ time.workspace = true
 app-common = { path = "../../crates/app-common" }
 app-storage = { path = "../../crates/app-storage" }
 app-secrets = { path = "../../crates/app-secrets" }
+app-http-server = { path = "../../crates/app-http-server" }
