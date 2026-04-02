@@ -248,6 +248,7 @@ name = "app-transform"
 version = "0.1.0"
 dependencies = [
  "app-common",
+ "base64 0.22.1",
  "serde",
  "serde_json",
  "serde_yaml",
