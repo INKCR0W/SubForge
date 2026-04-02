@@ -1,14 +1,22 @@
 //! app-core：业务编排层（调度、刷新、重试、状态机）。
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use app_common::Plugin;
-use app_plugin_runtime::{PluginLoader, PluginRuntimeError};
-use app_storage::{Database, PluginRepository, StorageError};
+use app_common::{ConfigSchemaProperty, Plugin, SourceInstance};
+use app_plugin_runtime::{LoadedPlugin, PluginLoader, PluginRuntimeError};
+use app_secrets::{SecretError, SecretStore};
+use app_storage::{
+    Database, PluginRepository, SourceConfigRepository, SourceRepository, StorageError,
+};
+use regex::Regex;
+use serde_json::Value;
 use thiserror::Error;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+
+const SECRET_PLACEHOLDER: &str = "••••••";
 
 #[derive(Debug, Error)]
 pub enum CoreError {
@@ -16,21 +24,421 @@ pub enum CoreError {
     PluginRuntime(#[from] PluginRuntimeError),
     #[error("存储层错误：{0}")]
     Storage(#[from] StorageError),
+    #[error("密钥存储错误：{0}")]
+    Secret(#[from] SecretError),
     #[error("文件系统错误：{0}")]
     Io(#[from] std::io::Error),
     #[error("时间格式化失败：{0}")]
     TimeFormat(#[from] time::error::Format),
     #[error("插件已安装：{0}")]
     PluginAlreadyInstalled(String),
+    #[error("配置校验失败：{0}")]
+    ConfigInvalid(String),
+    #[error("插件不存在：{0}")]
+    PluginNotFound(String),
+    #[error("来源不存在：{0}")]
+    SourceNotFound(String),
 }
 
 pub type CoreResult<T> = Result<T, CoreError>;
+
+impl CoreError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::PluginRuntime(error) => error.code(),
+            Self::ConfigInvalid(_) => "E_CONFIG_INVALID",
+            Self::PluginNotFound(_) | Self::SourceNotFound(_) => "E_NOT_FOUND",
+            Self::PluginAlreadyInstalled(_) => "E_PLUGIN_INVALID",
+            Self::Storage(_) | Self::Secret(_) | Self::Io(_) | Self::TimeFormat(_) => "E_INTERNAL",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceWithConfig {
+    pub source: SourceInstance,
+    pub config: BTreeMap<String, Value>,
+}
+
+#[derive(Debug)]
+pub struct SourceService<'a> {
+    db: &'a Database,
+    secret_store: &'a dyn SecretStore,
+    loader: PluginLoader,
+    plugins_dir: PathBuf,
+}
 
 #[derive(Debug)]
 pub struct PluginInstallService<'a> {
     db: &'a Database,
     loader: PluginLoader,
     plugins_dir: PathBuf,
+}
+
+struct PreparedConfig {
+    normalized: BTreeMap<String, Value>,
+    non_secret: BTreeMap<String, String>,
+    secret: BTreeMap<String, String>,
+}
+
+impl<'a> SourceService<'a> {
+    pub fn new(
+        db: &'a Database,
+        plugins_dir: impl Into<PathBuf>,
+        secret_store: &'a dyn SecretStore,
+    ) -> Self {
+        Self {
+            db,
+            secret_store,
+            loader: PluginLoader::new(),
+            plugins_dir: plugins_dir.into(),
+        }
+    }
+
+    pub fn create_source(
+        &self,
+        plugin_id: &str,
+        name: &str,
+        config: BTreeMap<String, Value>,
+    ) -> CoreResult<SourceWithConfig> {
+        if name.trim().is_empty() {
+            return Err(CoreError::ConfigInvalid("name 不能为空".to_string()));
+        }
+
+        let loaded = self.load_installed_plugin(plugin_id)?;
+        let prepared = self.validate_and_split_config(&loaded, &config)?;
+        let now = now_rfc3339()?;
+        let source = SourceInstance {
+            id: format!(
+                "source-{}-{}",
+                plugin_id.replace('.', "-"),
+                OffsetDateTime::now_utc().unix_timestamp_nanos()
+            ),
+            plugin_id: plugin_id.to_string(),
+            name: name.to_string(),
+            status: "healthy".to_string(),
+            state_json: None,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        let source_repository = SourceRepository::new(self.db);
+        let config_repository = SourceConfigRepository::new(self.db);
+        source_repository.insert(&source)?;
+
+        if let Err(error) =
+            self.persist_source_config(&source, &loaded, &prepared, &config_repository, false)
+        {
+            let _ = source_repository.delete(&source.id);
+            for key in prepared.secret.keys() {
+                let _ = self
+                    .secret_store
+                    .delete(&plugin_scope(&source.plugin_id), key.as_str());
+            }
+            return Err(error);
+        }
+
+        Ok(SourceWithConfig {
+            source,
+            config: masked_config(&loaded, &prepared.normalized),
+        })
+    }
+
+    pub fn get_source(&self, source_id: &str) -> CoreResult<Option<SourceWithConfig>> {
+        let source_repository = SourceRepository::new(self.db);
+        let source = match source_repository.get_by_id(source_id)? {
+            Some(source) => source,
+            None => return Ok(None),
+        };
+        let loaded = self.load_installed_plugin(&source.plugin_id)?;
+        let config_repository = SourceConfigRepository::new(self.db);
+        let stored = config_repository.get_all(&source.id)?;
+        let masked = self.inflate_and_mask_config(&source, &loaded, &stored)?;
+
+        Ok(Some(SourceWithConfig {
+            source,
+            config: masked,
+        }))
+    }
+
+    pub fn list_sources(&self) -> CoreResult<Vec<SourceWithConfig>> {
+        let source_repository = SourceRepository::new(self.db);
+        let sources = source_repository.list()?;
+        let config_repository = SourceConfigRepository::new(self.db);
+        let mut result = Vec::with_capacity(sources.len());
+
+        for source in sources {
+            let loaded = self.load_installed_plugin(&source.plugin_id)?;
+            let stored = config_repository.get_all(&source.id)?;
+            let masked = self.inflate_and_mask_config(&source, &loaded, &stored)?;
+            result.push(SourceWithConfig {
+                source,
+                config: masked,
+            });
+        }
+
+        Ok(result)
+    }
+
+    pub fn update_source_config(
+        &self,
+        source_id: &str,
+        config: BTreeMap<String, Value>,
+    ) -> CoreResult<SourceWithConfig> {
+        let source_repository = SourceRepository::new(self.db);
+        let mut source = source_repository
+            .get_by_id(source_id)?
+            .ok_or_else(|| CoreError::SourceNotFound(source_id.to_string()))?;
+        let loaded = self.load_installed_plugin(&source.plugin_id)?;
+        let prepared = self.validate_and_split_config(&loaded, &config)?;
+        let config_repository = SourceConfigRepository::new(self.db);
+        let previous_non_secret = config_repository.get_all(&source.id)?;
+        let scope = plugin_scope(&source.plugin_id);
+        let previous_secret =
+            self.snapshot_secret_values(&scope, &loaded.manifest.secret_fields)?;
+
+        if let Err(error) =
+            self.persist_source_config(&source, &loaded, &prepared, &config_repository, true)
+        {
+            let _ = config_repository.replace_all(&source.id, &previous_non_secret);
+            let _ = self.restore_secret_values(
+                &scope,
+                &loaded.manifest.secret_fields,
+                &previous_secret,
+            );
+            return Err(error);
+        }
+
+        source.updated_at = now_rfc3339()?;
+        if let Err(error) = source_repository.update(&source) {
+            let _ = config_repository.replace_all(&source.id, &previous_non_secret);
+            let _ = self.restore_secret_values(
+                &scope,
+                &loaded.manifest.secret_fields,
+                &previous_secret,
+            );
+            return Err(error.into());
+        }
+
+        Ok(SourceWithConfig {
+            source,
+            config: masked_config(&loaded, &prepared.normalized),
+        })
+    }
+
+    pub fn delete_source(&self, source_id: &str) -> CoreResult<()> {
+        let source_repository = SourceRepository::new(self.db);
+        let source = source_repository
+            .get_by_id(source_id)?
+            .ok_or_else(|| CoreError::SourceNotFound(source_id.to_string()))?;
+        let loaded = self.load_installed_plugin(&source.plugin_id)?;
+        let scope = plugin_scope(&source.plugin_id);
+        let previous_secret =
+            self.snapshot_secret_values(&scope, &loaded.manifest.secret_fields)?;
+
+        for secret_key in &loaded.manifest.secret_fields {
+            if let Err(error) = self.secret_store.delete(&scope, secret_key) {
+                let _ = self.restore_secret_values(
+                    &scope,
+                    &loaded.manifest.secret_fields,
+                    &previous_secret,
+                );
+                return Err(error.into());
+            }
+        }
+
+        if let Err(error) = source_repository.delete(source_id) {
+            let _ = self.restore_secret_values(
+                &scope,
+                &loaded.manifest.secret_fields,
+                &previous_secret,
+            );
+            return Err(error.into());
+        }
+        Ok(())
+    }
+
+    fn load_installed_plugin(&self, plugin_id: &str) -> CoreResult<LoadedPlugin> {
+        let plugin_repository = PluginRepository::new(self.db);
+        let plugin = plugin_repository.get_by_plugin_id(plugin_id)?;
+        if plugin.is_none() {
+            return Err(CoreError::PluginNotFound(plugin_id.to_string()));
+        }
+        let plugin_dir = self.plugins_dir.join(plugin_id);
+        let loaded = self.loader.load_from_dir(plugin_dir)?;
+        Ok(loaded)
+    }
+
+    fn validate_and_split_config(
+        &self,
+        loaded: &LoadedPlugin,
+        config: &BTreeMap<String, Value>,
+    ) -> CoreResult<PreparedConfig> {
+        for required in &loaded.schema.required {
+            if !config.contains_key(required) {
+                return Err(CoreError::ConfigInvalid(format!(
+                    "缺少必填字段：{required}"
+                )));
+            }
+        }
+
+        if loaded.schema.additional_properties != Some(true) {
+            for key in config.keys() {
+                if !loaded.schema.properties.contains_key(key) {
+                    return Err(CoreError::ConfigInvalid(format!(
+                        "字段未在 schema 中定义：{key}"
+                    )));
+                }
+            }
+        }
+
+        let secret_fields = loaded
+            .manifest
+            .secret_fields
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+
+        let mut normalized = BTreeMap::new();
+        let mut non_secret = BTreeMap::new();
+        let mut secret = BTreeMap::new();
+
+        for (field_name, property) in &loaded.schema.properties {
+            let raw_value = config
+                .get(field_name)
+                .cloned()
+                .or_else(|| property.default.clone());
+            if let Some(raw_value) = raw_value {
+                let validated = validate_property_value(field_name, property, &raw_value)?;
+                let serialized = serde_json::to_string(&validated).map_err(|error| {
+                    CoreError::ConfigInvalid(format!("字段 {field_name} 序列化失败：{error}"))
+                })?;
+
+                if secret_fields.contains(field_name) {
+                    secret.insert(
+                        field_name.clone(),
+                        stringify_secret_value(field_name, property, &validated)?,
+                    );
+                } else {
+                    non_secret.insert(field_name.clone(), serialized);
+                }
+                normalized.insert(field_name.clone(), validated);
+            }
+        }
+
+        if loaded.schema.additional_properties == Some(true) {
+            for (field_name, value) in config {
+                if loaded.schema.properties.contains_key(field_name) {
+                    continue;
+                }
+                if !is_scalar_json(value) {
+                    return Err(CoreError::ConfigInvalid(format!(
+                        "字段 {field_name} 仅允许 string/number/boolean"
+                    )));
+                }
+                let serialized = serde_json::to_string(value).map_err(|error| {
+                    CoreError::ConfigInvalid(format!("字段 {field_name} 序列化失败：{error}"))
+                })?;
+                non_secret.insert(field_name.clone(), serialized);
+                normalized.insert(field_name.clone(), value.clone());
+            }
+        }
+
+        Ok(PreparedConfig {
+            normalized,
+            non_secret,
+            secret,
+        })
+    }
+
+    fn persist_source_config(
+        &self,
+        source: &SourceInstance,
+        loaded: &LoadedPlugin,
+        prepared: &PreparedConfig,
+        config_repository: &SourceConfigRepository<'_>,
+        prune_secret: bool,
+    ) -> CoreResult<()> {
+        config_repository.replace_all(&source.id, &prepared.non_secret)?;
+
+        let scope = plugin_scope(&source.plugin_id);
+        for (key, value) in &prepared.secret {
+            self.secret_store.set(&scope, key, value)?;
+        }
+        if prune_secret {
+            for key in &loaded.manifest.secret_fields {
+                if !prepared.secret.contains_key(key) {
+                    self.secret_store.delete(&scope, key)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn inflate_and_mask_config(
+        &self,
+        source: &SourceInstance,
+        loaded: &LoadedPlugin,
+        stored: &BTreeMap<String, String>,
+    ) -> CoreResult<BTreeMap<String, Value>> {
+        let mut config = BTreeMap::new();
+        for (key, raw) in stored {
+            if let Some(property) = loaded.schema.properties.get(key) {
+                let value = inflate_typed_value(key, property, raw)?;
+                config.insert(key.clone(), value);
+            } else {
+                let value = serde_json::from_str::<Value>(raw)
+                    .unwrap_or_else(|_| Value::String(raw.clone()));
+                config.insert(key.clone(), value);
+            }
+        }
+
+        let secret_keys = self
+            .secret_store
+            .list_keys(&plugin_scope(&source.plugin_id))?
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        for key in &loaded.manifest.secret_fields {
+            if secret_keys.contains(key) {
+                config.insert(key.clone(), Value::String(SECRET_PLACEHOLDER.to_string()));
+            }
+        }
+        Ok(config)
+    }
+
+    fn snapshot_secret_values(
+        &self,
+        scope: &str,
+        secret_fields: &[String],
+    ) -> CoreResult<BTreeMap<String, String>> {
+        let mut snapshot = BTreeMap::new();
+        for secret_key in secret_fields {
+            match self.secret_store.get(scope, secret_key) {
+                Ok(value) => {
+                    snapshot.insert(secret_key.clone(), value.to_string());
+                }
+                Err(SecretError::SecretMissing(_)) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(snapshot)
+    }
+
+    fn restore_secret_values(
+        &self,
+        scope: &str,
+        secret_fields: &[String],
+        snapshot: &BTreeMap<String, String>,
+    ) -> CoreResult<()> {
+        for secret_key in secret_fields {
+            if let Some(value) = snapshot.get(secret_key) {
+                self.secret_store.set(scope, secret_key, value)?;
+            } else {
+                self.secret_store.delete(scope, secret_key)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<'a> PluginInstallService<'a> {
@@ -95,6 +503,214 @@ impl<'a> PluginInstallService<'a> {
     }
 }
 
+fn now_rfc3339() -> CoreResult<String> {
+    Ok(OffsetDateTime::now_utc().format(&Rfc3339)?)
+}
+
+fn plugin_scope(plugin_id: &str) -> String {
+    format!("plugin:{plugin_id}")
+}
+
+fn is_scalar_json(value: &Value) -> bool {
+    matches!(value, Value::String(_) | Value::Number(_) | Value::Bool(_))
+}
+
+fn masked_config(
+    loaded: &LoadedPlugin,
+    normalized_config: &BTreeMap<String, Value>,
+) -> BTreeMap<String, Value> {
+    let mut result = normalized_config.clone();
+    for key in &loaded.manifest.secret_fields {
+        if result.contains_key(key) {
+            result.insert(key.clone(), Value::String(SECRET_PLACEHOLDER.to_string()));
+        }
+    }
+    result
+}
+
+fn validate_property_value(
+    field_name: &str,
+    property: &ConfigSchemaProperty,
+    value: &Value,
+) -> CoreResult<Value> {
+    let mut validated = match property.property_type.as_str() {
+        "string" => {
+            let text = value.as_str().ok_or_else(|| {
+                CoreError::ConfigInvalid(format!("字段 {field_name} 必须是 string"))
+            })?;
+            if let Some(min_length) = property.min_length {
+                if text.chars().count() < min_length as usize {
+                    return Err(CoreError::ConfigInvalid(format!(
+                        "字段 {field_name} 长度不能小于 {min_length}"
+                    )));
+                }
+            }
+            if let Some(max_length) = property.max_length {
+                if text.chars().count() > max_length as usize {
+                    return Err(CoreError::ConfigInvalid(format!(
+                        "字段 {field_name} 长度不能大于 {max_length}"
+                    )));
+                }
+            }
+            if let Some(pattern) = &property.pattern {
+                let regex = Regex::new(pattern).map_err(|error| {
+                    CoreError::ConfigInvalid(format!("字段 {field_name} 的 pattern 非法：{error}"))
+                })?;
+                if !regex.is_match(text) {
+                    return Err(CoreError::ConfigInvalid(format!(
+                        "字段 {field_name} 不匹配 pattern 约束"
+                    )));
+                }
+            }
+            Value::String(text.to_string())
+        }
+        "number" => {
+            let number = value.as_f64().ok_or_else(|| {
+                CoreError::ConfigInvalid(format!("字段 {field_name} 必须是 number"))
+            })?;
+            if let Some(minimum) = property.minimum {
+                if number < minimum {
+                    return Err(CoreError::ConfigInvalid(format!(
+                        "字段 {field_name} 不能小于 {minimum}"
+                    )));
+                }
+            }
+            if let Some(maximum) = property.maximum {
+                if number > maximum {
+                    return Err(CoreError::ConfigInvalid(format!(
+                        "字段 {field_name} 不能大于 {maximum}"
+                    )));
+                }
+            }
+            let parsed = serde_json::Number::from_f64(number).ok_or_else(|| {
+                CoreError::ConfigInvalid(format!("字段 {field_name} 不是有效 number"))
+            })?;
+            Value::Number(parsed)
+        }
+        "integer" => {
+            let parsed = value
+                .as_i64()
+                .or_else(|| value.as_u64().and_then(|raw| i64::try_from(raw).ok()))
+                .ok_or_else(|| {
+                    CoreError::ConfigInvalid(format!("字段 {field_name} 必须是 integer"))
+                })?;
+            if let Some(minimum) = property.minimum {
+                if (parsed as f64) < minimum {
+                    return Err(CoreError::ConfigInvalid(format!(
+                        "字段 {field_name} 不能小于 {minimum}"
+                    )));
+                }
+            }
+            if let Some(maximum) = property.maximum {
+                if (parsed as f64) > maximum {
+                    return Err(CoreError::ConfigInvalid(format!(
+                        "字段 {field_name} 不能大于 {maximum}"
+                    )));
+                }
+            }
+            Value::Number(parsed.into())
+        }
+        "boolean" => Value::Bool(value.as_bool().ok_or_else(|| {
+            CoreError::ConfigInvalid(format!("字段 {field_name} 必须是 boolean"))
+        })?),
+        _ => {
+            return Err(CoreError::ConfigInvalid(format!(
+                "字段 {field_name} 包含不支持类型：{}",
+                property.property_type
+            )));
+        }
+    };
+
+    if let Some(enum_values) = &property.enum_values {
+        if !enum_values.iter().any(|item| item == &validated) {
+            return Err(CoreError::ConfigInvalid(format!(
+                "字段 {field_name} 必须在枚举值范围内"
+            )));
+        }
+    }
+
+    if property.property_type == "integer" {
+        // 统一整数 JSON 形态，避免 1 和 1.0 在枚举比较时产生歧义。
+        if let Some(raw) = validated.as_i64() {
+            validated = Value::Number(raw.into());
+        }
+    }
+
+    Ok(validated)
+}
+
+fn stringify_secret_value(
+    field_name: &str,
+    property: &ConfigSchemaProperty,
+    value: &Value,
+) -> CoreResult<String> {
+    match property.property_type.as_str() {
+        "string" => value
+            .as_str()
+            .map(ToString::to_string)
+            .ok_or_else(|| CoreError::ConfigInvalid(format!("字段 {field_name} 必须是 string"))),
+        "number" | "integer" => Ok(value
+            .as_i64()
+            .map(|raw| raw.to_string())
+            .or_else(|| value.as_u64().map(|raw| raw.to_string()))
+            .or_else(|| value.as_f64().map(|raw| raw.to_string()))
+            .ok_or_else(|| {
+                CoreError::ConfigInvalid(format!("字段 {field_name} 必须是 number/integer"))
+            })?),
+        "boolean" => value
+            .as_bool()
+            .map(|raw| raw.to_string())
+            .ok_or_else(|| CoreError::ConfigInvalid(format!("字段 {field_name} 必须是 boolean"))),
+        _ => Err(CoreError::ConfigInvalid(format!(
+            "字段 {field_name} 包含不支持类型：{}",
+            property.property_type
+        ))),
+    }
+}
+
+fn inflate_typed_value(
+    field_name: &str,
+    property: &ConfigSchemaProperty,
+    raw: &str,
+) -> CoreResult<Value> {
+    if let Ok(parsed) = serde_json::from_str::<Value>(raw) {
+        return validate_property_value(field_name, property, &parsed);
+    }
+
+    // 兼容旧存储格式（value 直接保存为字符串）。
+    let fallback = match property.property_type.as_str() {
+        "string" => Value::String(raw.to_string()),
+        "number" => {
+            let parsed = raw.parse::<f64>().map_err(|error| {
+                CoreError::ConfigInvalid(format!("字段 {field_name} number 解析失败：{error}"))
+            })?;
+            Value::Number(serde_json::Number::from_f64(parsed).ok_or_else(|| {
+                CoreError::ConfigInvalid(format!("字段 {field_name} 不是有效 number"))
+            })?)
+        }
+        "integer" => {
+            let parsed = raw.parse::<i64>().map_err(|error| {
+                CoreError::ConfigInvalid(format!("字段 {field_name} integer 解析失败：{error}"))
+            })?;
+            Value::Number(parsed.into())
+        }
+        "boolean" => {
+            let parsed = raw.parse::<bool>().map_err(|error| {
+                CoreError::ConfigInvalid(format!("字段 {field_name} boolean 解析失败：{error}"))
+            })?;
+            Value::Bool(parsed)
+        }
+        _ => {
+            return Err(CoreError::ConfigInvalid(format!(
+                "字段 {field_name} 包含不支持类型：{}",
+                property.property_type
+            )));
+        }
+    };
+
+    validate_property_value(field_name, property, &fallback)
+}
+
 fn copy_dir_recursive(source: &Path, target: &Path) -> CoreResult<()> {
     fs::create_dir_all(target)?;
     for entry in fs::read_dir(source)? {
@@ -112,13 +728,16 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> CoreResult<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use app_storage::{Database, PluginRepository};
+    use app_secrets::{MemorySecretStore, SecretStore};
+    use app_storage::{Database, PluginRepository, SourceConfigRepository, SourceRepository};
+    use serde_json::{Value, json};
 
-    use super::{CoreError, PluginInstallService};
+    use super::{CoreError, PluginInstallService, SourceService};
 
     #[test]
     fn install_plugin_copies_files_and_inserts_database_record() {
@@ -218,6 +837,127 @@ mod tests {
         cleanup_dir(&temp_root);
     }
 
+    #[test]
+    fn create_source_routes_secret_fields_to_secret_store() {
+        let db = Database::open_in_memory().expect("内存数据库初始化失败");
+        let temp_root = create_temp_dir("source-create");
+        let plugins_dir = temp_root.join("plugins");
+        let plugin_source_dir = create_secret_static_plugin_dir(&temp_root);
+        let install_service = PluginInstallService::new(&db, &plugins_dir);
+        install_service
+            .install_from_dir(&plugin_source_dir)
+            .expect("安装带密钥字段插件应成功");
+
+        let secret_store = MemorySecretStore::new();
+        let source_service = SourceService::new(&db, &plugins_dir, &secret_store);
+        let mut config = BTreeMap::new();
+        config.insert(
+            "url".to_string(),
+            json!("https://example.com/subscription.txt"),
+        );
+        config.insert("token".to_string(), json!("token-value"));
+        config.insert("region".to_string(), json!("sg"));
+
+        let created = source_service
+            .create_source("vendor.example.secure-static", "Secure Source", config)
+            .expect("创建来源应成功");
+
+        let config_repository = SourceConfigRepository::new(&db);
+        let persisted_config = config_repository
+            .get_all(&created.source.id)
+            .expect("查询来源配置失败");
+        assert!(persisted_config.contains_key("url"));
+        assert!(persisted_config.contains_key("region"));
+        assert!(!persisted_config.contains_key("token"));
+
+        let secret = secret_store
+            .get("plugin:vendor.example.secure-static", "token")
+            .expect("secret 字段应进入 SecretStore");
+        assert_eq!(secret.as_str(), "token-value");
+        assert_eq!(
+            created.config.get("token"),
+            Some(&Value::String("••••••".to_string()))
+        );
+
+        let fetched = source_service
+            .get_source(&created.source.id)
+            .expect("读取来源应成功")
+            .expect("来源应存在");
+        assert_eq!(
+            fetched.config.get("token"),
+            Some(&Value::String("••••••".to_string()))
+        );
+
+        let listed = source_service.list_sources().expect("列出来源应成功");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            listed[0].config.get("token"),
+            Some(&Value::String("••••••".to_string()))
+        );
+
+        cleanup_dir(&temp_root);
+    }
+
+    #[test]
+    fn source_config_validation_error_returns_e_config_invalid() {
+        let db = Database::open_in_memory().expect("内存数据库初始化失败");
+        let temp_root = create_temp_dir("source-invalid-config");
+        let plugins_dir = temp_root.join("plugins");
+        let install_service = PluginInstallService::new(&db, &plugins_dir);
+        install_service
+            .install_from_dir(builtins_static_plugin_dir())
+            .expect("安装内置插件应成功");
+
+        let secret_store = MemorySecretStore::new();
+        let source_service = SourceService::new(&db, &plugins_dir, &secret_store);
+        let error = source_service
+            .create_source("subforge.builtin.static", "Broken Source", BTreeMap::new())
+            .expect_err("缺少必填字段时应失败");
+
+        assert!(matches!(error, CoreError::ConfigInvalid(_)));
+        assert_eq!(error.code(), "E_CONFIG_INVALID");
+        cleanup_dir(&temp_root);
+    }
+
+    #[test]
+    fn delete_source_cleans_plugin_secret() {
+        let db = Database::open_in_memory().expect("内存数据库初始化失败");
+        let temp_root = create_temp_dir("source-delete");
+        let plugins_dir = temp_root.join("plugins");
+        let plugin_source_dir = create_secret_static_plugin_dir(&temp_root);
+        let install_service = PluginInstallService::new(&db, &plugins_dir);
+        install_service
+            .install_from_dir(&plugin_source_dir)
+            .expect("安装带密钥字段插件应成功");
+
+        let secret_store = MemorySecretStore::new();
+        let source_service = SourceService::new(&db, &plugins_dir, &secret_store);
+        let mut config = BTreeMap::new();
+        config.insert("url".to_string(), json!("https://example.com/a"));
+        config.insert("token".to_string(), json!("token-a"));
+
+        let created = source_service
+            .create_source("vendor.example.secure-static", "Secure Source", config)
+            .expect("创建来源应成功");
+        source_service
+            .delete_source(&created.source.id)
+            .expect("删除来源应成功");
+
+        let source_repository = SourceRepository::new(&db);
+        assert!(
+            source_repository
+                .get_by_id(&created.source.id)
+                .expect("查询来源失败")
+                .is_none()
+        );
+
+        let error = secret_store
+            .get("plugin:vendor.example.secure-static", "token")
+            .expect_err("删除来源后应清理对应 secret");
+        assert_eq!(error.code(), "E_SECRET_MISSING");
+        cleanup_dir(&temp_root);
+    }
+
     fn builtins_static_plugin_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/builtins/static")
     }
@@ -264,6 +1004,40 @@ mod tests {
             .expect("读取内置 plugin.json 失败")
             .replace("\"version\": \"1.0.0\"", "\"version\": \"1.0.1\"");
         fs::write(path.join("plugin.json"), plugin_json).expect("写入升级插件 plugin.json 失败");
+        path
+    }
+
+    fn create_secret_static_plugin_dir(base: &Path) -> PathBuf {
+        let path = base.join("secure-static-plugin");
+        fs::create_dir_all(&path).expect("创建插件目录失败");
+        fs::write(
+            path.join("plugin.json"),
+            r#"{
+                "plugin_id": "vendor.example.secure-static",
+                "spec_version": "1.0",
+                "name": "Secure Static Source",
+                "version": "1.0.0",
+                "type": "static",
+                "config_schema": "schema.json",
+                "secret_fields": ["token"],
+                "capabilities": ["http", "json"],
+                "network_profile": "standard"
+            }"#,
+        )
+        .expect("写入 plugin.json 失败");
+        fs::write(
+            path.join("schema.json"),
+            r#"{
+                "type": "object",
+                "required": ["url", "token"],
+                "properties": {
+                    "url": { "type": "string", "minLength": 1 },
+                    "token": { "type": "string", "minLength": 1, "format": "password" },
+                    "region": { "type": "string", "enum": ["auto", "hk", "sg", "us"], "default": "auto" }
+                }
+            }"#,
+        )
+        .expect("写入 schema.json 失败");
         path
     }
 

@@ -162,7 +162,10 @@ version = "0.1.0"
 dependencies = [
  "app-common",
  "app-plugin-runtime",
+ "app-secrets",
  "app-storage",
+ "regex",
+ "serde_json",
  "thiserror 2.0.18",
  "time",
 ]

@@ -1,5 +1,6 @@
 //! app-storage：存储层（SQLite、迁移、仓储接口）。
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -306,6 +307,79 @@ impl<'a> SourceRepository<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct SourceConfigRepository<'a> {
+    db: &'a Database,
+}
+
+impl<'a> SourceConfigRepository<'a> {
+    pub fn new(db: &'a Database) -> Self {
+        Self { db }
+    }
+
+    pub fn replace_all(
+        &self,
+        source_instance_id: &str,
+        values: &BTreeMap<String, String>,
+    ) -> StorageResult<()> {
+        self.db.with_connection(|connection| {
+            let tx = connection.transaction()?;
+            tx.execute(
+                "DELETE FROM source_instance_config WHERE source_instance_id = ?1",
+                [source_instance_id],
+            )?;
+            for (key, value) in values {
+                tx.execute(
+                    "INSERT INTO source_instance_config (id, source_instance_id, key, value)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        format!("{source_instance_id}:{key}"),
+                        source_instance_id,
+                        key,
+                        value
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+    }
+
+    pub fn get_all(&self, source_instance_id: &str) -> StorageResult<BTreeMap<String, String>> {
+        self.db.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT key, value
+                 FROM source_instance_config
+                 WHERE source_instance_id = ?1
+                 ORDER BY key",
+            )?;
+            let rows = statement.query_map([source_instance_id], |row| {
+                let key: String = row.get("key")?;
+                let value: String = row.get("value")?;
+                Ok((key, value))
+            })?;
+
+            let mut values = BTreeMap::new();
+            for row in rows {
+                let (key, value) = row?;
+                values.insert(key, value);
+            }
+            Ok(values)
+        })
+    }
+
+    pub fn delete_all(&self, source_instance_id: &str) -> StorageResult<usize> {
+        self.db.with_connection(|connection| {
+            let affected = connection.execute(
+                "DELETE FROM source_instance_config
+                 WHERE source_instance_id = ?1",
+                [source_instance_id],
+            )?;
+            Ok(affected)
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct ProfileRepository<'a> {
     db: &'a Database,
 }
@@ -528,6 +602,7 @@ mod tests {
     use super::PluginRepository;
     use super::ProfileRepository;
     use super::SettingsRepository;
+    use super::SourceConfigRepository;
     use super::SourceRepository;
     use super::StorageResult;
 
@@ -727,6 +802,31 @@ mod tests {
 
         assert_eq!(repository.delete(&updated_source.id)?, 1);
         assert!(repository.get_by_id(&updated_source.id)?.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn source_config_repository_replace_and_delete_workflow() -> StorageResult<()> {
+        let db = Database::open_in_memory()?;
+        let source_repository = SourceRepository::new(&db);
+        let config_repository = SourceConfigRepository::new(&db);
+        let source = sample_source("source-config-1", "vendor.example.static");
+        source_repository.insert(&source)?;
+
+        let mut first = BTreeMap::new();
+        first.insert("url".to_string(), "https://example.com/sub".to_string());
+        first.insert("user_agent".to_string(), "SubForge/0.1".to_string());
+        config_repository.replace_all(&source.id, &first)?;
+        assert_eq!(config_repository.get_all(&source.id)?, first);
+
+        let mut second = BTreeMap::new();
+        second.insert("url".to_string(), "https://example.com/next".to_string());
+        config_repository.replace_all(&source.id, &second)?;
+        assert_eq!(config_repository.get_all(&source.id)?, second);
+
+        assert_eq!(config_repository.delete_all(&source.id)?, 1);
+        assert!(config_repository.get_all(&source.id)?.is_empty());
 
         Ok(())
     }

@@ -32,6 +32,7 @@ fs2 = "^0.4"
 getrandom = "^0.3"
 keyring = "^3.6"
 rand = "^0.9"
+regex = "^1.11"
 reqwest = { version = "^0.13", features = ["json"] }
 refinery = { version = "^0.8", features = ["rusqlite"] }
 rusqlite = { version = "^0.26", features = ["bundled"] }
