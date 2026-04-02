@@ -56,6 +56,7 @@ impl TransportError {
 pub type TransportResult<T> = Result<T, TransportError>;
 
 pub trait TransportProfile: Send + Sync + std::fmt::Debug {
+    fn profile_name(&self) -> &'static str;
     fn build_client(&self) -> TransportResult<Client>;
     fn request_delay(&self) -> Duration;
     fn default_headers(&self) -> &[(&'static str, &'static str)] {
@@ -90,6 +91,10 @@ impl Default for StandardProfile {
 }
 
 impl TransportProfile for StandardProfile {
+    fn profile_name(&self) -> &'static str {
+        "standard"
+    }
+
     fn build_client(&self) -> TransportResult<Client> {
         let client = Client::builder()
             .redirect(Policy::limited(self.max_redirects))
@@ -127,6 +132,10 @@ impl Default for BrowserChromeProfile {
 }
 
 impl TransportProfile for BrowserChromeProfile {
+    fn profile_name(&self) -> &'static str {
+        "browser_chrome"
+    }
+
     fn build_client(&self) -> TransportResult<Client> {
         let client = Client::builder()
             .redirect(Policy::limited(self.max_redirects))

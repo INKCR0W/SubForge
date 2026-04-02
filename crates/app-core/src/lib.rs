@@ -218,6 +218,10 @@ where
         let url = Url::parse(subscription_url)
             .map_err(|error| CoreError::ConfigInvalid(format!("订阅 URL 非法：{error}")))?;
         let headers = self.build_request_headers(user_agent)?;
+        let redacted_url = redact_url_for_log(&url);
+        let redacted_headers = redact_headers_for_log(&headers);
+        let started = std::time::Instant::now();
+        let profile_name = self.transport_profile.profile_name();
 
         let mut retry_attempt = 0usize;
         let response = loop {
@@ -231,18 +235,61 @@ where
                 .headers(headers.clone())
                 .send()
                 .await
-                .map_err(|error| CoreError::SubscriptionFetch(error.to_string()))?;
+                .map_err(|error| {
+                    let sanitized = sanitize_reqwest_error(&error, &url);
+                    eprintln!(
+                        "WARN: 订阅请求失败 source_id={} profile={} url={} elapsed_ms={} request_headers={} error={}",
+                        source_instance_id,
+                        profile_name,
+                        redacted_url,
+                        started.elapsed().as_millis(),
+                        redacted_headers,
+                        sanitized
+                    );
+                    CoreError::SubscriptionFetch(sanitized)
+                })?;
 
             let status = response.status();
             if status.is_success() {
+                eprintln!(
+                    "INFO: 订阅请求成功 source_id={} profile={} url={} status={} elapsed_ms={} retries={} request_headers={}",
+                    source_instance_id,
+                    profile_name,
+                    redacted_url,
+                    status.as_u16(),
+                    started.elapsed().as_millis(),
+                    retry_attempt,
+                    redacted_headers
+                );
                 break response;
             }
             if retry_attempt < self.transport_profile.max_retries()
                 && self.transport_profile.is_retryable_status(status)
             {
+                eprintln!(
+                    "WARN: 订阅请求触发重试 source_id={} profile={} url={} status={} elapsed_ms={} retry={}/{} request_headers={}",
+                    source_instance_id,
+                    profile_name,
+                    redacted_url,
+                    status.as_u16(),
+                    started.elapsed().as_millis(),
+                    retry_attempt + 1,
+                    self.transport_profile.max_retries(),
+                    redacted_headers
+                );
                 retry_attempt += 1;
                 continue;
             }
+            eprintln!(
+                "WARN: 订阅请求状态异常 source_id={} profile={} url={} status={} elapsed_ms={} retries={} request_headers={}",
+                source_instance_id,
+                profile_name,
+                redacted_url,
+                status.as_u16(),
+                started.elapsed().as_millis(),
+                retry_attempt,
+                redacted_headers
+            );
             return Err(CoreError::SubscriptionFetch(format!(
                 "上游响应状态码异常：{}",
                 status.as_u16()
@@ -884,6 +931,80 @@ fn retry_backoff(base_delay: std::time::Duration, retry_attempt: usize) -> std::
     base_delay.saturating_mul(1_u32 << shift)
 }
 
+fn redact_url_for_log(url: &Url) -> String {
+    let mut sanitized = url.clone();
+    if url.query().is_none() {
+        return sanitized.to_string();
+    }
+    sanitized.set_query(None);
+    {
+        let mut query = sanitized.query_pairs_mut();
+        for (key, value) in url.query_pairs() {
+            if is_sensitive_query_key(key.as_ref()) {
+                query.append_pair(key.as_ref(), "***");
+            } else {
+                query.append_pair(key.as_ref(), value.as_ref());
+            }
+        }
+    }
+    sanitized.to_string()
+}
+
+fn sanitize_reqwest_error(error: &reqwest::Error, url: &Url) -> String {
+    let message = error.to_string();
+    let redacted_url = redact_url_for_log(url);
+    message.replace(url.as_str(), &redacted_url)
+}
+
+fn redact_headers_for_log(headers: &HeaderMap) -> String {
+    if headers.is_empty() {
+        return "[]".to_string();
+    }
+    let mut pairs = headers
+        .iter()
+        .map(|(name, value)| {
+            let key = name.as_str().to_ascii_lowercase();
+            let value = if is_sensitive_header(&key) {
+                "***".to_string()
+            } else {
+                value.to_str().unwrap_or("<non-utf8>").to_string()
+            };
+            format!("{key}={value}")
+        })
+        .collect::<Vec<_>>();
+    pairs.sort_unstable();
+    format!("[{}]", pairs.join(", "))
+}
+
+fn is_sensitive_query_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "token"
+            | "access_token"
+            | "password"
+            | "passwd"
+            | "secret"
+            | "auth"
+            | "authorization"
+            | "api_key"
+            | "apikey"
+            | "cookie"
+    )
+}
+
+fn is_sensitive_header(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "authorization"
+            | "proxy-authorization"
+            | "cookie"
+            | "set-cookie"
+            | "x-api-key"
+            | "x-auth-token"
+            | "x-access-token"
+    )
+}
+
 fn validate_content_type(headers: &HeaderMap) -> CoreResult<()> {
     let Some(content_type) = headers
         .get(CONTENT_TYPE)
@@ -1503,15 +1624,19 @@ mod tests {
         RefreshJobRepository, SourceConfigRepository, SourceRepository,
     };
     use axum::Router;
-    use axum::http::StatusCode;
+    use axum::http::{HeaderMap as AxumHeaderMap, StatusCode};
     use axum::routing::get;
+    use reqwest::Url;
+    use reqwest::header::{
+        ACCEPT, AUTHORIZATION, COOKIE, HeaderMap as ReqwestHeaderMap, HeaderValue,
+    };
     use serde_json::{Value, json};
     use tokio::net::TcpListener;
     use tokio::task::JoinHandle;
 
     use super::{
         CoreError, Engine, PluginInstallService, SourceService, StaticFetcher, SubscriptionParser,
-        UriListParser,
+        UriListParser, redact_headers_for_log, redact_url_for_log,
     };
 
     const BASE64_SUBSCRIPTION_FIXTURE: &str =
@@ -1863,6 +1988,116 @@ mod tests {
         assert_eq!(error.code(), "E_CONFIG_INVALID");
     }
 
+    #[test]
+    fn request_log_redacts_sensitive_headers() {
+        let mut headers = ReqwestHeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("Bearer sensitive-token"),
+        );
+        headers.insert(COOKIE, HeaderValue::from_static("sid=secret-cookie"));
+        headers.insert(ACCEPT, HeaderValue::from_static("text/plain"));
+
+        let redacted = redact_headers_for_log(&headers);
+        assert!(redacted.contains("authorization=***"));
+        assert!(redacted.contains("cookie=***"));
+        assert!(redacted.contains("accept=text/plain"));
+        assert!(!redacted.contains("sensitive-token"));
+        assert!(!redacted.contains("secret-cookie"));
+    }
+
+    #[test]
+    fn request_log_redacts_sensitive_query_parameters() {
+        let original =
+            Url::parse("https://example.com/subscription?token=abc123&password=pwd&region=sg")
+                .expect("构建测试 URL 失败");
+        let redacted = redact_url_for_log(&original);
+        let parsed = Url::parse(&redacted).expect("脱敏后的 URL 应可解析");
+        let query = parsed
+            .query_pairs()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(query.get("token"), Some(&"***".to_string()));
+        assert_eq!(query.get("password"), Some(&"***".to_string()));
+        assert_eq!(query.get("region"), Some(&"sg".to_string()));
+        assert!(!redacted.contains("abc123"));
+        assert!(!redacted.contains("pwd"));
+    }
+
+    #[tokio::test]
+    async fn engine_refresh_source_uses_profile_headers_from_plugin_manifest() {
+        let db = Database::open_in_memory().expect("内存数据库初始化失败");
+        let temp_root = create_temp_dir("engine-profile-routing");
+        let plugins_dir = temp_root.join("plugins");
+        let install_service = PluginInstallService::new(&db, &plugins_dir);
+        let standard_plugin_dir = create_static_plugin_with_network_profile(
+            &temp_root,
+            "standard-plugin",
+            "vendor.example.profile-standard",
+            "standard",
+        );
+        let chrome_plugin_dir = create_static_plugin_with_network_profile(
+            &temp_root,
+            "chrome-plugin",
+            "vendor.example.profile-browser-chrome",
+            "browser_chrome",
+        );
+        install_service
+            .install_from_dir(&standard_plugin_dir)
+            .expect("安装 standard 插件应成功");
+        install_service
+            .install_from_dir(&chrome_plugin_dir)
+            .expect("安装 browser_chrome 插件应成功");
+
+        let (url, total_requests, chrome_requests, server_task) = start_profile_gate_server(
+            "/sub",
+            BASE64_SUBSCRIPTION_FIXTURE.trim().to_string(),
+            "text/plain; charset=utf-8",
+        )
+        .await;
+
+        let secret_store = MemorySecretStore::new();
+        let source_service = SourceService::new(&db, &plugins_dir, &secret_store);
+        let mut standard_config = BTreeMap::new();
+        standard_config.insert("url".to_string(), json!(format!("{url}/sub")));
+        let standard_source = source_service
+            .create_source(
+                "vendor.example.profile-standard",
+                "Standard Profile Source",
+                standard_config,
+            )
+            .expect("创建 standard 来源应成功");
+
+        let mut chrome_config = BTreeMap::new();
+        chrome_config.insert("url".to_string(), json!(format!("{url}/sub")));
+        let chrome_source = source_service
+            .create_source(
+                "vendor.example.profile-browser-chrome",
+                "Browser Chrome Source",
+                chrome_config,
+            )
+            .expect("创建 browser_chrome 来源应成功");
+
+        let engine = Engine::new(&db, &plugins_dir, &secret_store);
+        let standard_error = engine
+            .refresh_source(&standard_source.source.id, "manual")
+            .await
+            .expect_err("standard 档位不应通过 Chrome Header 校验");
+        assert!(matches!(standard_error, CoreError::SubscriptionFetch(_)));
+
+        let chrome_result = engine
+            .refresh_source(&chrome_source.source.id, "manual")
+            .await
+            .expect("browser_chrome 档位应通过 Header 校验");
+        assert_eq!(chrome_result.node_count, 3);
+        assert_eq!(total_requests.load(Ordering::SeqCst), 2);
+        assert_eq!(chrome_requests.load(Ordering::SeqCst), 1);
+
+        server_task.abort();
+        cleanup_dir(&temp_root);
+    }
+
     #[tokio::test]
     async fn engine_refresh_source_records_refresh_job_success() {
         let db = Database::open_in_memory().expect("内存数据库初始化失败");
@@ -2031,6 +2266,42 @@ mod tests {
         path
     }
 
+    fn create_static_plugin_with_network_profile(
+        base: &Path,
+        dir_name: &str,
+        plugin_id: &str,
+        network_profile: &str,
+    ) -> PathBuf {
+        let path = base.join(dir_name);
+        fs::create_dir_all(&path).expect("创建插件目录失败");
+        let plugin_json = format!(
+            r#"{{
+                "plugin_id": "{plugin_id}",
+                "spec_version": "1.0",
+                "name": "{plugin_id}",
+                "version": "1.0.0",
+                "type": "static",
+                "config_schema": "schema.json",
+                "capabilities": ["http", "json"],
+                "network_profile": "{network_profile}"
+            }}"#
+        );
+        fs::write(path.join("plugin.json"), plugin_json).expect("写入 plugin.json 失败");
+        fs::write(
+            path.join("schema.json"),
+            r#"{
+                "type": "object",
+                "required": ["url"],
+                "properties": {
+                    "url": { "type": "string", "minLength": 1 }
+                },
+                "additionalProperties": false
+            }"#,
+        )
+        .expect("写入 schema.json 失败");
+        path
+    }
+
     fn sample_source(id: &str, plugin_id: &str) -> app_common::SourceInstance {
         app_common::SourceInstance {
             id: id.to_string(),
@@ -2069,6 +2340,68 @@ mod tests {
         });
 
         (base_url, task)
+    }
+
+    async fn start_profile_gate_server(
+        route_path: &'static str,
+        success_body: String,
+        content_type: &'static str,
+    ) -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>, JoinHandle<()>) {
+        let total_requests = Arc::new(AtomicUsize::new(0));
+        let chrome_requests = Arc::new(AtomicUsize::new(0));
+        let app = Router::new().route(
+            route_path,
+            get({
+                let total_requests = total_requests.clone();
+                let chrome_requests = chrome_requests.clone();
+                move |headers: AxumHeaderMap| {
+                    let success_body = success_body.clone();
+                    let total_requests = total_requests.clone();
+                    let chrome_requests = chrome_requests.clone();
+                    async move {
+                        total_requests.fetch_add(1, Ordering::SeqCst);
+                        let has_chrome_header = headers
+                            .get("sec-ch-ua")
+                            .and_then(|value| value.to_str().ok())
+                            .map(|value| value.contains("Chromium"))
+                            .unwrap_or(false);
+                        let has_fetch_mode = headers
+                            .get("sec-fetch-mode")
+                            .and_then(|value| value.to_str().ok())
+                            .map(|value| value == "navigate")
+                            .unwrap_or(false);
+                        if has_chrome_header && has_fetch_mode {
+                            chrome_requests.fetch_add(1, Ordering::SeqCst);
+                            (
+                                StatusCode::OK,
+                                [(axum::http::header::CONTENT_TYPE, content_type)],
+                                success_body,
+                            )
+                        } else {
+                            (
+                                StatusCode::FORBIDDEN,
+                                [(axum::http::header::CONTENT_TYPE, content_type)],
+                                "missing browser_chrome fingerprint".to_string(),
+                            )
+                        }
+                    }
+                }
+            }),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("启动测试 HTTP 服务失败");
+        let address: SocketAddr = listener.local_addr().expect("读取监听地址失败");
+        let base_url = format!("http://{}", address);
+
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("测试 HTTP 服务运行失败");
+        });
+
+        (base_url, total_requests, chrome_requests, task)
     }
 
     async fn start_retry_fixture_server(
