@@ -164,6 +164,7 @@ dependencies = [
  "app-plugin-runtime",
  "app-secrets",
  "app-storage",
+ "app-transport",
  "axum",
  "base64 0.22.1",
  "getrandom 0.3.4",
@@ -236,6 +237,10 @@ version = "0.1.0"
 [[package]]
 name = "app-transport"
 version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "arbitrary"

@@ -16,6 +16,7 @@ use app_storage::{
     Database, ExportToken, ExportTokenRepository, NodeCacheRepository, PluginRepository,
     RefreshJob, RefreshJobRepository, SourceConfigRepository, SourceRepository, StorageError,
 };
+use app_transport::NetworkProfileFactory;
 use base64::Engine as Base64Engine;
 use base64::engine::general_purpose::{
     STANDARD as BASE64_STANDARD, STANDARD_NO_PAD as BASE64_STANDARD_NO_PAD,
@@ -30,8 +31,6 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 const SECRET_PLACEHOLDER: &str = "••••••";
-const DEFAULT_SUBSCRIPTION_TIMEOUT_SEC: u64 = 30;
-const MAX_SUBSCRIPTION_REDIRECTS: usize = 10;
 const MAX_SUBSCRIPTION_BYTES: usize = 10 * 1024 * 1024;
 
 #[derive(Debug, Error)]
@@ -46,8 +45,8 @@ pub enum CoreError {
     Io(#[from] std::io::Error),
     #[error("时间格式化失败：{0}")]
     TimeFormat(#[from] time::error::Format),
-    #[error("HTTP 客户端初始化失败：{0}")]
-    HttpClientBuild(#[from] reqwest::Error),
+    #[error("传输层错误：{0}")]
+    Transport(#[from] app_transport::TransportError),
     #[error("随机数生成失败：{0}")]
     Random(#[from] getrandom::Error),
     #[error("插件已安装：{0}")]
@@ -79,8 +78,8 @@ impl CoreError {
             | Self::Io(_)
             | Self::TimeFormat(_)
             | Self::Random(_)
-            | Self::HttpClientBuild(_)
             | Self::SubscriptionFetch(_) => "E_INTERNAL",
+            Self::Transport(error) => error.code(),
         }
     }
 }
@@ -171,7 +170,11 @@ impl SubscriptionParser for UriListParser {
 
 impl<'a> StaticFetcher<'a, UriListParser> {
     pub fn new(db: &'a Database) -> CoreResult<Self> {
-        Self::with_parser(db, UriListParser)
+        Self::new_with_network_profile(db, "standard")
+    }
+
+    pub fn new_with_network_profile(db: &'a Database, network_profile: &str) -> CoreResult<Self> {
+        Self::with_parser_and_network_profile(db, UriListParser, network_profile)
     }
 }
 
@@ -180,14 +183,16 @@ where
     P: SubscriptionParser,
 {
     pub fn with_parser(db: &'a Database, parser: P) -> CoreResult<Self> {
-        let client = HttpClient::builder()
-            .redirect(reqwest::redirect::Policy::limited(
-                MAX_SUBSCRIPTION_REDIRECTS,
-            ))
-            .timeout(std::time::Duration::from_secs(
-                DEFAULT_SUBSCRIPTION_TIMEOUT_SEC,
-            ))
-            .build()?;
+        Self::with_parser_and_network_profile(db, parser, "standard")
+    }
+
+    pub fn with_parser_and_network_profile(
+        db: &'a Database,
+        parser: P,
+        network_profile: &str,
+    ) -> CoreResult<Self> {
+        let transport_profile = NetworkProfileFactory::create(network_profile)?;
+        let client = transport_profile.build_client()?;
 
         Ok(Self { db, parser, client })
     }
@@ -651,6 +656,7 @@ impl<'a> Engine<'a> {
         let source = source_service
             .get_source(source_id)?
             .ok_or_else(|| CoreError::SourceNotFound(source_id.to_string()))?;
+        let loaded_plugin = source_service.load_installed_plugin(&source.source.plugin_id)?;
 
         let url = source
             .config
@@ -681,7 +687,10 @@ impl<'a> Engine<'a> {
             error_message: None,
         })?;
 
-        let fetcher = StaticFetcher::new(self.db)?;
+        let fetcher = StaticFetcher::new_with_network_profile(
+            self.db,
+            &loaded_plugin.manifest.network_profile,
+        )?;
         let result = fetcher
             .fetch_and_cache(source_id, &url, user_agent.as_deref())
             .await;
@@ -1760,6 +1769,14 @@ mod tests {
         assert!(matches!(error, CoreError::SubscriptionFetch(_)));
 
         server_task.abort();
+    }
+
+    #[test]
+    fn static_fetcher_rejects_unknown_network_profile() {
+        let db = Database::open_in_memory().expect("内存数据库初始化失败");
+        let error = StaticFetcher::new_with_network_profile(&db, "unknown-profile")
+            .expect_err("未知网络档位必须返回错误");
+        assert_eq!(error.code(), "E_CONFIG_INVALID");
     }
 
     #[tokio::test]

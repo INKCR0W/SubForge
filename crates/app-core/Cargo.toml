@@ -11,6 +11,7 @@ app-common = { path = "../app-common" }
 app-plugin-runtime = { path = "../app-plugin-runtime" }
 app-secrets = { path = "../app-secrets" }
 app-storage = { path = "../app-storage" }
+app-transport = { path = "../app-transport" }
 base64.workspace = true
 getrandom.workspace = true
 regex.workspace = true
