@@ -1,0 +1,166 @@
+use crate::{
+    Database, ExportToken, ExportTokenRepository, NodeCacheRepository, ProfileRepository,
+    RefreshJob, RefreshJobRepository, SourceRepository, StorageResult,
+};
+
+use super::support::{sample_profile, sample_proxy_node, sample_source};
+
+#[test]
+fn node_cache_repository_upsert_and_delete_workflow() -> StorageResult<()> {
+    let db = Database::open_in_memory()?;
+    let source_repository = SourceRepository::new(&db);
+    let cache_repository = NodeCacheRepository::new(&db);
+    let source = sample_source("source-cache-1", "vendor.example.static");
+    source_repository.insert(&source)?;
+
+    let first_nodes = vec![sample_proxy_node("node-a", "hk.example.com", 443)];
+    cache_repository.upsert_nodes(
+        &source.id,
+        &first_nodes,
+        "2026-04-02T04:00:00Z",
+        Some("2026-04-02T05:00:00Z"),
+    )?;
+
+    let loaded = cache_repository
+        .get_by_source(&source.id)?
+        .expect("缓存应存在");
+    assert_eq!(loaded.source_instance_id, source.id);
+    assert_eq!(loaded.nodes, first_nodes);
+    assert_eq!(loaded.fetched_at, "2026-04-02T04:00:00Z");
+    assert_eq!(loaded.expires_at.as_deref(), Some("2026-04-02T05:00:00Z"));
+
+    let second_nodes = vec![
+        sample_proxy_node("node-b", "sg.example.com", 8443),
+        sample_proxy_node("node-c", "us.example.com", 443),
+    ];
+    cache_repository.upsert_nodes(&source.id, &second_nodes, "2026-04-02T06:00:00Z", None)?;
+    let updated = cache_repository
+        .get_by_source(&source.id)?
+        .expect("更新后缓存应存在");
+    assert_eq!(updated.nodes, second_nodes);
+    assert_eq!(updated.expires_at, None);
+
+    assert_eq!(cache_repository.delete_by_source(&source.id)?, 1);
+    assert!(cache_repository.get_by_source(&source.id)?.is_none());
+
+    Ok(())
+}
+
+#[test]
+fn refresh_job_repository_records_success_and_failure() -> StorageResult<()> {
+    let db = Database::open_in_memory()?;
+    let source_repository = SourceRepository::new(&db);
+    let refresh_repository = RefreshJobRepository::new(&db);
+    let source = sample_source("source-refresh-1", "vendor.example.static");
+    source_repository.insert(&source)?;
+
+    let success_job = RefreshJob {
+        id: "refresh-job-success".to_string(),
+        source_instance_id: source.id.clone(),
+        trigger_type: "manual".to_string(),
+        status: "running".to_string(),
+        started_at: Some("2026-04-02T06:00:00Z".to_string()),
+        finished_at: None,
+        node_count: None,
+        error_code: None,
+        error_message: None,
+    };
+    refresh_repository.insert(&success_job)?;
+    assert_eq!(
+        refresh_repository.mark_success(&success_job.id, "2026-04-02T06:00:10Z", 42)?,
+        1
+    );
+
+    let success_loaded = refresh_repository
+        .get_by_id(&success_job.id)?
+        .expect("成功任务应存在");
+    assert_eq!(success_loaded.status, "success");
+    assert_eq!(success_loaded.node_count, Some(42));
+    assert_eq!(success_loaded.error_code, None);
+    assert_eq!(success_loaded.error_message, None);
+
+    let failed_job = RefreshJob {
+        id: "refresh-job-failed".to_string(),
+        source_instance_id: source.id.clone(),
+        trigger_type: "scheduled".to_string(),
+        status: "running".to_string(),
+        started_at: Some("2026-04-02T06:10:00Z".to_string()),
+        finished_at: None,
+        node_count: None,
+        error_code: None,
+        error_message: None,
+    };
+    refresh_repository.insert(&failed_job)?;
+    assert_eq!(
+        refresh_repository.mark_failed(
+            &failed_job.id,
+            "2026-04-02T06:10:20Z",
+            "E_HTTP_5XX",
+            "upstream 502"
+        )?,
+        1
+    );
+
+    let failed_loaded = refresh_repository
+        .get_by_id(&failed_job.id)?
+        .expect("失败任务应存在");
+    assert_eq!(failed_loaded.status, "failed");
+    assert_eq!(failed_loaded.node_count, None);
+    assert_eq!(failed_loaded.error_code.as_deref(), Some("E_HTTP_5XX"));
+    assert_eq!(failed_loaded.error_message.as_deref(), Some("upstream 502"));
+
+    let by_source = refresh_repository.list_by_source(&source.id)?;
+    assert_eq!(by_source.len(), 2);
+    assert_eq!(by_source[0].id, success_job.id);
+    assert_eq!(by_source[1].id, failed_job.id);
+
+    Ok(())
+}
+
+#[test]
+fn export_token_repository_supports_active_and_expiring_tokens() -> StorageResult<()> {
+    let db = Database::open_in_memory()?;
+    let profile_repository = ProfileRepository::new(&db);
+    let token_repository = ExportTokenRepository::new(&db);
+    let profile = sample_profile("profile-export-token");
+    profile_repository.insert(&profile)?;
+
+    let active = ExportToken {
+        id: "token-active".to_string(),
+        profile_id: profile.id.clone(),
+        token: "token-active-value".to_string(),
+        token_type: "primary".to_string(),
+        created_at: "2026-04-02T06:20:00Z".to_string(),
+        expires_at: None,
+    };
+    token_repository.insert(&active)?;
+
+    let expiring = ExportToken {
+        id: "token-expiring".to_string(),
+        profile_id: profile.id.clone(),
+        token: "token-expiring-value".to_string(),
+        token_type: "grace".to_string(),
+        created_at: "2026-04-02T06:21:00Z".to_string(),
+        expires_at: Some("2026-04-02T06:30:00Z".to_string()),
+    };
+    token_repository.insert(&expiring)?;
+
+    let loaded_active = token_repository
+        .get_active_token(&profile.id)?
+        .expect("应能读取 active token");
+    assert_eq!(loaded_active.token, active.token);
+
+    assert!(token_repository.is_valid_token(&profile.id, &active.token, "2026-04-02T06:22:00Z")?);
+    assert!(token_repository.is_valid_token(
+        &profile.id,
+        &expiring.token,
+        "2026-04-02T06:22:00Z"
+    )?);
+    assert!(!token_repository.is_valid_token(
+        &profile.id,
+        &expiring.token,
+        "2026-04-02T06:40:00Z"
+    )?);
+
+    Ok(())
+}
