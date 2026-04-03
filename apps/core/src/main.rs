@@ -2,6 +2,7 @@ mod bootstrap;
 mod cli;
 mod config;
 mod headless;
+mod logging;
 mod security;
 mod settings_seed;
 #[cfg(test)]

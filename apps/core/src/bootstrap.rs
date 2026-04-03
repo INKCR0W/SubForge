@@ -20,6 +20,7 @@ use crate::config::LoadedHeadlessConfig;
 use crate::headless::{
     apply_headless_configuration, apply_headless_settings, validate_headless_configuration,
 };
+use crate::logging::initialize_logging;
 use crate::security::{
     acquire_single_instance_lock, ensure_data_dir, is_loopback_host,
     load_or_create_admin_token_with_override, resolve_data_dir, set_owner_only_file_permissions,
@@ -88,12 +89,23 @@ async fn run_server(args: RunArgs) -> Result<()> {
             report.updated_profiles
         );
     }
+    let logging_runtime = initialize_logging(&data_dir, loaded_config.as_ref(), database.as_ref())?;
+    if logging_runtime.initialized {
+        tracing::info!(
+            log_dir = %logging_runtime.log_dir.display(),
+            level = %logging_runtime.level,
+            retention_days = logging_runtime.retention_days,
+            cleaned_files = logging_runtime.cleaned_files,
+            "日志系统已初始化"
+        );
+    }
 
     if !is_loopback_host(&host) {
         eprintln!(
             "WARNING: 当前监听地址为 {}，这不是回环地址，请确认安全风险。",
             host
         );
+        tracing::warn!(listen_host = %host, "监听地址不是回环地址，请确认安全风险");
     }
 
     let (event_sender, _event_receiver) = tokio::sync::broadcast::channel::<ApiEvent>(256);
@@ -134,11 +146,18 @@ async fn run_server(args: RunArgs) -> Result<()> {
         port,
         secret_backend.as_str()
     );
+    tracing::info!(
+        listen_host = %host,
+        listen_port = port,
+        secret_backend = secret_backend.as_str(),
+        "SubForge Core 已启动"
+    );
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal(shutdown_receiver))
         .await?;
 
     drop(lock_file);
+    drop(logging_runtime);
     Ok(())
 }
 
@@ -192,8 +211,10 @@ async fn shutdown_signal(mut shutdown_receiver: tokio::sync::watch::Receiver<boo
             Ok(stream) => stream,
             Err(err) => {
                 eprintln!("WARNING: 注册 SIGTERM 监听失败: {err:#}");
+                tracing::warn!(error = %err, "注册 SIGTERM 监听失败，退回 Ctrl+C 监听");
                 let _ = tokio::signal::ctrl_c().await;
                 println!("收到退出信号，正在优雅关闭...");
+                tracing::info!("收到退出信号，正在优雅关闭");
                 return;
             }
         };
@@ -214,6 +235,7 @@ async fn shutdown_signal(mut shutdown_receiver: tokio::sync::watch::Receiver<boo
     }
 
     println!("收到退出信号，正在优雅关闭...");
+    tracing::info!("收到退出信号，正在优雅关闭");
 }
 
 fn load_headless_config(path: Option<&Path>) -> Result<Option<LoadedHeadlessConfig>> {
