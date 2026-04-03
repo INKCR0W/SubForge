@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use serde_json::Value;
@@ -16,6 +17,16 @@ fn csp_directive(csp: &str, name: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn csp_sources(csp: &str, name: &str) -> Option<Vec<String>> {
+    csp_directive(csp, name).map(|directive| {
+        directive
+            .split_whitespace()
+            .skip(1)
+            .map(ToOwned::to_owned)
+            .collect()
+    })
+}
+
 #[test]
 fn tauri_csp_blocks_eval_and_remote_script() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -24,49 +35,48 @@ fn tauri_csp_blocks_eval_and_remote_script() {
         .as_str()
         .expect("tauri.conf.json 缺少 app.security.csp");
 
-    let script_src = csp_directive(csp, "script-src").expect("CSP 缺少 script-src 指令");
-    assert!(
-        !script_src.contains("unsafe-eval"),
-        "script-src 不得包含 unsafe-eval"
-    );
-    assert!(
-        !script_src.contains("unsafe-inline"),
-        "script-src 不得包含 unsafe-inline"
-    );
-    assert!(
-        !script_src.contains("http:") && !script_src.contains("https:"),
-        "script-src 不得允许外部 http/https 脚本"
+    let default_src = csp_sources(csp, "default-src").expect("CSP 缺少 default-src 指令");
+    assert_eq!(
+        default_src,
+        vec!["'self'".to_string()],
+        "default-src 仅允许 'self'"
     );
 
-    let connect_src = csp_directive(csp, "connect-src").expect("CSP 缺少 connect-src 指令");
+    let script_src = csp_sources(csp, "script-src").expect("CSP 缺少 script-src 指令");
     assert!(
-        connect_src.contains("ipc:"),
-        "connect-src 必须允许 ipc: 以支持 IPC 通道"
+        script_src == vec!["'self'".to_string()],
+        "script-src 必须严格为 'self'，以阻断 eval/inline/外链脚本"
     );
-    assert!(
-        connect_src.contains("http://ipc.localhost"),
-        "connect-src 必须仅允许 http://ipc.localhost"
+
+    let connect_src = csp_sources(csp, "connect-src").expect("CSP 缺少 connect-src 指令");
+    let connect_src_set = connect_src.into_iter().collect::<BTreeSet<_>>();
+    let expected_set = ["ipc:", "http://ipc.localhost"]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        connect_src_set, expected_set,
+        "connect-src 必须仅允许 ipc: 与 http://ipc.localhost"
     );
 }
 
 #[test]
-fn tauri_main_window_disables_devtools_in_config() {
+fn tauri_all_windows_disable_devtools_in_config() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let config = read_json(&root.join("tauri.conf.json"));
     let windows = config["app"]["windows"]
         .as_array()
         .expect("tauri.conf.json 缺少 app.windows");
 
-    let main_window = windows
-        .iter()
-        .find(|window| window["label"].as_str() == Some("main"))
-        .expect("未找到 label=main 的窗口配置");
-
-    assert_eq!(
-        main_window["devtools"].as_bool(),
-        Some(false),
-        "main 窗口必须显式禁用 DevTools"
-    );
+    assert!(!windows.is_empty(), "至少需要一个窗口配置");
+    for window in windows {
+        let label = window["label"].as_str().unwrap_or("<unnamed>");
+        assert_eq!(
+            window["devtools"].as_bool(),
+            Some(false),
+            "窗口 {label} 必须显式禁用 DevTools"
+        );
+    }
 }
 
 #[test]
@@ -97,5 +107,21 @@ fn capability_uses_minimal_permissions_and_blocks_devtools_toggle() {
     assert!(
         values.contains(&"core:webview:deny-internal-toggle-devtools"),
         "能力配置必须显式拒绝 WebView 内部 DevTools 开关"
+    );
+    assert!(
+        !values
+            .iter()
+            .any(|entry| *entry == "core:webview:allow-internal-toggle-devtools"),
+        "能力配置不得包含允许 internal-toggle-devtools 的权限"
+    );
+    let toggle_permissions = values
+        .iter()
+        .filter(|entry| entry.contains("toggle-devtools"))
+        .copied()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        toggle_permissions,
+        vec!["core:webview:deny-internal-toggle-devtools"],
+        "toggle-devtools 相关权限只允许 deny 项"
     );
 }
