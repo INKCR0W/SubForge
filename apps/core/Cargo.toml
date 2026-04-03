@@ -30,3 +30,4 @@ rusqlite.workspace = true
 
 [dev-dependencies]
 reqwest.workspace = true
+zip = "^2.2"
