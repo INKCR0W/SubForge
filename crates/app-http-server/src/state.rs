@@ -9,7 +9,7 @@ use app_storage::Database;
 use axum::Json;
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 
 pub(crate) const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub(crate) const MAX_PLUGIN_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
@@ -37,6 +37,7 @@ pub struct ServerContext {
     pub(crate) plugins_dir: PathBuf,
     pub(crate) host_validation: HostValidationState,
     pub(crate) event_sender: broadcast::Sender<ApiEvent>,
+    pub(crate) shutdown_signal: watch::Sender<bool>,
     pub(crate) rate_limiter: Arc<RateLimiter>,
     pub(crate) auth_failures: Arc<AuthFailures>,
     pub(crate) profile_cache: Arc<ProfileCache>,
@@ -52,6 +53,7 @@ impl ServerContext {
         listen_port: u16,
         event_sender: broadcast::Sender<ApiEvent>,
     ) -> Self {
+        let (shutdown_signal, _shutdown_receiver) = watch::channel(false);
         Self {
             admin_token: Arc::new(admin_token),
             database,
@@ -59,11 +61,16 @@ impl ServerContext {
             plugins_dir,
             host_validation: HostValidationState::new(listen_port),
             event_sender,
+            shutdown_signal,
             rate_limiter: Arc::new(RateLimiter::default()),
             auth_failures: Arc::new(AuthFailures::default()),
             profile_cache: Arc::new(ProfileCache::default()),
             source_userinfo_cache: Arc::new(SourceUserinfoCache::default()),
         }
+    }
+
+    pub fn shutdown_receiver(&self) -> watch::Receiver<bool> {
+        self.shutdown_signal.subscribe()
     }
 }
 

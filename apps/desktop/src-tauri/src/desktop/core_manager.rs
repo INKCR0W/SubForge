@@ -96,15 +96,22 @@ impl CoreManager {
     }
 
     pub(crate) async fn stop_core(&self) -> Result<CoreStatusPayload> {
-        let mut maybe_child = {
+        let (mut maybe_child, base_url, admin_token) = {
             let mut state = self.lock_state()?;
             self.reap_child_if_exited(&mut state)?;
+            self.try_restore_admin_token(&mut state);
             abort_events_task(&mut state);
-            state.child.take()
+            (
+                state.child.take(),
+                state.base_url.clone(),
+                state.admin_token.clone(),
+            )
         };
 
         if let Some(child) = maybe_child.as_mut() {
             terminate_child(child).context("停止 Core 进程失败")?;
+        } else if let Some(token) = admin_token {
+            let _ = self.request_remote_shutdown(&base_url, &token).await;
         }
 
         {
@@ -238,5 +245,24 @@ impl CoreManager {
         let payload: super::types::SettingsResponse =
             serde_json::from_str(&response.body).context("解析系统设置响应失败")?;
         Ok(payload.settings)
+    }
+
+    async fn request_remote_shutdown(&self, base_url: &str, admin_token: &str) -> Result<()> {
+        let url = format!("{base_url}/api/system/shutdown");
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(admin_token)
+            .send()
+            .await
+            .with_context(|| format!("请求 Core 远程关闭失败: {url}"))?;
+
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "Core 远程关闭返回非成功状态: {}",
+                response.status()
+            ));
+        }
+        Ok(())
     }
 }

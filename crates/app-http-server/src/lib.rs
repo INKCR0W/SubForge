@@ -20,7 +20,7 @@ use handlers::{
     get_system_settings_handler, get_system_status_handler, health_handler, import_plugin_handler,
     list_logs_handler, list_plugins_handler, list_profiles_handler, list_sources_handler,
     refresh_profile_handler, refresh_source_handler, rotate_profile_export_token_handler,
-    toggle_plugin_handler, update_profile_handler, update_source_handler,
+    shutdown_system_handler, toggle_plugin_handler, update_profile_handler, update_source_handler,
     update_system_settings_handler,
 };
 use middleware::{
@@ -39,6 +39,7 @@ pub fn build_router(state: ServerContext) -> Router {
             get(get_system_settings_handler).put(update_system_settings_handler),
         )
         .route("/api/system/status", get(get_system_status_handler))
+        .route("/api/system/shutdown", post(shutdown_system_handler))
         .route("/api/logs", get(list_logs_handler))
         .route("/api/plugins", get(list_plugins_handler))
         .route("/api/plugins/import", post(import_plugin_handler))

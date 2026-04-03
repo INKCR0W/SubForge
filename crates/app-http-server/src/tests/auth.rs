@@ -80,3 +80,38 @@ async fn options_preflight_returns_204_without_cors_header() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn shutdown_endpoint_requires_admin_token() {
+    let app = build_router(build_test_state());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/system/shutdown")
+                .header(HOST, "127.0.0.1:18118")
+                .body(Body::empty())
+                .expect("创建请求失败"),
+        )
+        .await
+        .expect("请求执行失败");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn shutdown_endpoint_accepts_admin_header() {
+    let app = build_router(build_test_state());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/system/shutdown")
+                .header(HOST, "127.0.0.1:18118")
+                .header("authorization", "Bearer test-admin-token")
+                .body(Body::empty())
+                .expect("创建请求失败"),
+        )
+        .await
+        .expect("请求执行失败");
+    assert_eq!(response.status(), StatusCode::OK);
+}

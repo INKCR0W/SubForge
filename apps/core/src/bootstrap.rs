@@ -97,14 +97,16 @@ async fn run_server(args: RunArgs) -> Result<()> {
     }
 
     let (event_sender, _event_receiver) = tokio::sync::broadcast::channel::<ApiEvent>(256);
-    let app = build_http_router(ServerContext::new(
+    let server_context = ServerContext::new(
         admin_token.clone(),
         Arc::clone(&database),
         Arc::clone(&secret_store),
         data_dir.join("plugins"),
         port,
         event_sender,
-    ));
+    );
+    let shutdown_receiver = server_context.shutdown_receiver();
+    let app = build_http_router(server_context);
 
     if args.gui_mode {
         let bootstrap = GuiBootstrap {
@@ -132,7 +134,7 @@ async fn run_server(args: RunArgs) -> Result<()> {
         secret_backend.as_str()
     );
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(shutdown_receiver))
         .await?;
 
     drop(lock_file);
@@ -180,7 +182,7 @@ pub(crate) fn run_refresh(args: RefreshArgs) -> Result<()> {
     Ok(())
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(mut shutdown_receiver: tokio::sync::watch::Receiver<bool>) {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
@@ -198,12 +200,16 @@ async fn shutdown_signal() {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {},
             _ = terminate.recv() => {},
+            _ = shutdown_receiver.changed() => {},
         }
     }
 
     #[cfg(not(unix))]
     {
-        let _ = tokio::signal::ctrl_c().await;
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = shutdown_receiver.changed() => {},
+        }
     }
 
     println!("收到退出信号，正在优雅关闭...");

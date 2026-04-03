@@ -94,3 +94,10 @@ pub(crate) async fn update_system_settings_handler(
         }),
     ))
 }
+
+pub(crate) async fn shutdown_system_handler(
+    State(state): State<ServerContext>,
+) -> ApiResult<ShutdownResponse> {
+    let _ = state.shutdown_signal.send(true);
+    Ok((StatusCode::OK, Json(ShutdownResponse { accepted: true })))
+}
