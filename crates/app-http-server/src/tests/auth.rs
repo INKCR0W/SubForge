@@ -1,6 +1,8 @@
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header::HOST};
+use std::io::Write as _;
 use tower::ServiceExt;
+use zip::write::SimpleFileOptions;
 
 use super::*;
 
@@ -234,4 +236,136 @@ async fn admin_token_rotate_replaces_in_memory_and_file_token() {
     let persisted = std::fs::read_to_string(state.admin_token_path.as_path())
         .expect("读取 admin_token 文件失败");
     assert_eq!(persisted.trim(), new_token);
+}
+
+#[tokio::test]
+async fn auth_failures_trigger_rate_limit_after_five_invalid_attempts() {
+    let app = build_router(build_test_state());
+
+    for _ in 0..4 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/plugins")
+                    .header(HOST, "127.0.0.1:18118")
+                    .header("authorization", "Bearer wrong-token")
+                    .body(Body::empty())
+                    .expect("创建请求失败"),
+            )
+            .await
+            .expect("请求执行失败");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    let threshold_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/plugins")
+                .header(HOST, "127.0.0.1:18118")
+                .header("authorization", "Bearer wrong-token")
+                .body(Body::empty())
+                .expect("创建请求失败"),
+        )
+        .await
+        .expect("请求执行失败");
+    assert_eq!(threshold_response.status(), StatusCode::TOO_MANY_REQUESTS);
+    let threshold_payload = read_json(threshold_response).await;
+    assert_eq!(
+        threshold_payload
+            .get("code")
+            .and_then(serde_json::Value::as_str),
+        Some("E_RATE_LIMIT")
+    );
+
+    let cooldown_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/plugins")
+                .header(HOST, "127.0.0.1:18118")
+                .header("authorization", "Bearer wrong-token")
+                .body(Body::empty())
+                .expect("创建请求失败"),
+        )
+        .await
+        .expect("请求执行失败");
+    assert_eq!(cooldown_response.status(), StatusCode::TOO_MANY_REQUESTS);
+    let cooldown_payload = read_json(cooldown_response).await;
+    assert_eq!(
+        cooldown_payload
+            .get("code")
+            .and_then(serde_json::Value::as_str),
+        Some("E_RATE_LIMIT")
+    );
+}
+
+#[tokio::test]
+async fn plugin_import_rejects_zip_path_traversal_entries() {
+    let app = build_router(build_test_state());
+    let boundary = "----subforge-path-traversal-boundary";
+    let payload = build_path_traversal_zip_bytes();
+    let request_body = build_multipart_plugin_body(boundary, &payload, "malicious.zip");
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/plugins/import")
+                .header(HOST, "127.0.0.1:18118")
+                .header("authorization", "Bearer test-admin-token")
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(request_body))
+                .expect("创建请求失败"),
+        )
+        .await
+        .expect("请求执行失败");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let payload = read_json(response).await;
+    assert_eq!(
+        payload.get("code").and_then(serde_json::Value::as_str),
+        Some("E_CONFIG_INVALID")
+    );
+    assert!(
+        payload
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|message| message.contains("路径非法"))
+    );
+
+    let list_response = app
+        .oneshot(admin_request(
+            axum::http::Method::GET,
+            "/api/plugins",
+            Body::empty(),
+        ))
+        .await
+        .expect("请求执行失败");
+    assert_eq!(list_response.status(), StatusCode::OK);
+    let list_payload = read_json(list_response).await;
+    let plugins = list_payload
+        .get("plugins")
+        .and_then(serde_json::Value::as_array)
+        .expect("响应应包含 plugins 数组");
+    assert!(plugins.is_empty(), "非法插件包不应被安装");
+}
+
+fn build_path_traversal_zip_bytes() -> Vec<u8> {
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    {
+        let mut writer = zip::ZipWriter::new(&mut cursor);
+        let options = SimpleFileOptions::default();
+        writer
+            .start_file("../escape.txt", options)
+            .expect("写入 zip 条目失败");
+        writer
+            .write_all(b"malicious payload")
+            .expect("写入 zip 内容失败");
+        writer.finish().expect("完成 zip 构建失败");
+    }
+    cursor.into_inner()
 }
