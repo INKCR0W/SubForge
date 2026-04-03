@@ -8,6 +8,7 @@ import {
   fetchCoreHealth,
   fetchSystemSettings,
 } from "../lib/api";
+import { notifyDesktopForCoreEvent } from "../lib/desktop-notification";
 import { useCoreUiStore } from "../stores/core-ui-store";
 import type { CoreBridgeEvent, WindowCloseBehavior } from "../types/core";
 
@@ -215,6 +216,7 @@ export function CoreConnectionProvider({ children }: PropsWithChildren) {
           payload.payload.event === "refresh:error" ||
           payload.payload.event === "source:degraded"
         ) {
+          void notifyDesktopForCoreEvent(payload.payload);
           addToast({
             title: payload.payload.event,
             description: payload.payload.message,
