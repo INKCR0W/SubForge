@@ -133,10 +133,7 @@ pub(super) fn build_plugin_multipart_body(
     payload: &[u8],
     file_name: &str,
 ) -> Vec<u8> {
-    let safe_file_name = file_name
-        .replace('\r', "_")
-        .replace('\n', "_")
-        .replace('"', "_");
+    let safe_file_name = file_name.replace(['\r', '\n', '"'], "_");
 
     let mut body = Vec::new();
     write!(body, "--{boundary}\r\n").expect("写入 multipart 边界失败");

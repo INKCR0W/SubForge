@@ -101,7 +101,7 @@ fn capability_uses_minimal_permissions_and_blocks_devtools_toggle() {
         "能力配置不应包含 http 权限"
     );
     assert!(
-        !values.iter().any(|entry| *entry == "core:default"),
+        !values.contains(&"core:default"),
         "能力配置不应使用 core:default 粗粒度授权"
     );
     assert!(
@@ -109,9 +109,7 @@ fn capability_uses_minimal_permissions_and_blocks_devtools_toggle() {
         "能力配置必须显式拒绝 WebView 内部 DevTools 开关"
     );
     assert!(
-        !values
-            .iter()
-            .any(|entry| *entry == "core:webview:allow-internal-toggle-devtools"),
+        !values.contains(&"core:webview:allow-internal-toggle-devtools"),
         "能力配置不得包含允许 internal-toggle-devtools 的权限"
     );
     let toggle_permissions = values

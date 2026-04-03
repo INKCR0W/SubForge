@@ -38,15 +38,16 @@ pub(crate) async fn list_logs_handler(
     let refresh_repository = RefreshJobRepository::new(state.database.as_ref());
     let source_repository = SourceRepository::new(state.database.as_ref());
 
-    let refresh_jobs = if source_id_filter.is_none() && offset == 0 && status_filter.is_some() {
-        let status = status_filter.expect("status_filter 已检查为 Some");
-        refresh_repository
-            .list_recent_by_status(status, limit)
-            .map_err(storage_error_to_response)?
-    } else if source_id_filter.is_none() && offset == 0 && status_filter.is_none() {
-        refresh_repository
-            .list_recent(limit)
-            .map_err(storage_error_to_response)?
+    let refresh_jobs = if source_id_filter.is_none() && offset == 0 {
+        if let Some(status) = status_filter {
+            refresh_repository
+                .list_recent_by_status(status, limit)
+                .map_err(storage_error_to_response)?
+        } else {
+            refresh_repository
+                .list_recent(limit)
+                .map_err(storage_error_to_response)?
+        }
     } else {
         refresh_repository
             .list_recent_filtered(status_filter, source_id_filter, limit, offset)

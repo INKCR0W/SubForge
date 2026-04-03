@@ -115,9 +115,7 @@ impl ProfileCache {
     pub(crate) fn get_fresh(&self, profile_id: &str, ttl: Duration) -> Option<ProfileCacheEntry> {
         let mut inner = self.inner.lock().ok()?;
         let now = Instant::now();
-        let Some(entry) = inner.get(profile_id).cloned() else {
-            return None;
-        };
+        let entry = inner.get(profile_id).cloned()?;
         if now.duration_since(entry.cached_at) <= ttl {
             Some(entry)
         } else {

@@ -137,7 +137,7 @@ pub(crate) async fn toggle_plugin_handler(
     let updated = repository
         .get_by_id(&plugin.id)
         .map_err(storage_error_to_response)?
-        .ok_or_else(|| internal_error_response())?;
+        .ok_or_else(internal_error_response)?;
 
     let action = if payload.enabled { "启用" } else { "禁用" };
     emit_event(

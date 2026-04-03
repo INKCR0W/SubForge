@@ -601,6 +601,30 @@ async fn e2e_import_source_refresh_and_raw_profile_output() {
         .expect("更新 profile 来源列表请求执行失败");
     assert_eq!(update_profile_response.status(), StatusCode::OK);
 
+    let refresh_source_b_response = app
+        .clone()
+        .oneshot(admin_request(
+            Method::POST,
+            &format!("/api/sources/{source_b_id}/refresh"),
+            Body::empty(),
+        ))
+        .await
+        .expect("刷新第二个来源请求执行失败");
+    assert_eq!(refresh_source_b_response.status(), StatusCode::OK);
+    let refresh_source_b_payload = read_json(refresh_source_b_response).await;
+    assert_eq!(
+        refresh_source_b_payload
+            .get("source_id")
+            .and_then(Value::as_str),
+        Some(source_b_id.as_str())
+    );
+    assert_eq!(
+        refresh_source_b_payload
+            .get("node_count")
+            .and_then(Value::as_u64),
+        Some(3)
+    );
+
     let multi_source_raw = app
         .clone()
         .oneshot(
@@ -621,6 +645,22 @@ async fn e2e_import_source_refresh_and_raw_profile_output() {
             .headers()
             .get("subscription-userinfo")
             .is_none()
+    );
+    let multi_source_payload = read_json(multi_source_raw).await;
+    assert_eq!(
+        multi_source_payload
+            .get("node_count")
+            .and_then(Value::as_u64),
+        Some(3),
+        "多来源重复节点应去重后保持 3 个"
+    );
+    assert_eq!(
+        multi_source_payload
+            .get("nodes")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(3),
+        "重复来源刷新后仍应输出去重后的 3 条节点"
     );
 
     server_task.abort();

@@ -92,7 +92,7 @@ fn handle_tray_icon_event(tray: &tauri::tray::TrayIcon, event: TrayIconEvent) {
         ..
     } = event
     {
-        restore_main_window(&tray.app_handle());
+        restore_main_window(tray.app_handle());
     }
 }
 

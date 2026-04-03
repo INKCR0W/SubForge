@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use app_common::{ProxyProtocol, ProxyTransport, TlsConfig};
 use serde_json::{Value, json};
@@ -17,10 +18,12 @@ fn keeps_latest_node_for_duplicate_identity_and_outputs_17_nodes() {
             &format!("shared-{index}.example.com"),
             3000 + index as u16,
             ProxyTransport::Ws,
-            Some(&format!("uuid-{index}")),
-            None,
-            Some(&format!("/a/{index}")),
-            Some("hk"),
+            NodeMeta {
+                uuid: Some(&format!("uuid-{index}")),
+                password: None,
+                path: Some(&format!("/a/{index}")),
+                region: Some("hk"),
+            },
             "2026-04-03T01:00:00Z",
         ));
     }
@@ -33,10 +36,12 @@ fn keeps_latest_node_for_duplicate_identity_and_outputs_17_nodes() {
             &format!("shared-{index}.example.com"),
             3000 + index as u16,
             ProxyTransport::Ws,
-            Some(&format!("uuid-{index}")),
-            None,
-            Some(&format!("/a/{index}")),
-            Some("sg"),
+            NodeMeta {
+                uuid: Some(&format!("uuid-{index}")),
+                password: None,
+                path: Some(&format!("/a/{index}")),
+                region: Some("sg"),
+            },
             "2026-04-03T02:00:00Z",
         ));
     }
@@ -47,10 +52,12 @@ fn keeps_latest_node_for_duplicate_identity_and_outputs_17_nodes() {
             &format!("source-b-{index}.example.com"),
             5000 + index as u16,
             ProxyTransport::Tcp,
-            Some(&format!("uuid-b-{index}")),
-            None,
-            None,
-            Some("sg"),
+            NodeMeta {
+                uuid: Some(&format!("uuid-b-{index}")),
+                password: None,
+                path: None,
+                region: Some("sg"),
+            },
             "2026-04-03T02:00:00Z",
         ));
     }
@@ -79,10 +86,12 @@ fn appends_source_alias_when_names_conflict() {
         "a.example.com",
         443,
         ProxyTransport::Tcp,
-        Some("uuid-a"),
-        None,
-        None,
-        Some("hk"),
+        NodeMeta {
+            uuid: Some("uuid-a"),
+            password: None,
+            path: None,
+            region: Some("hk"),
+        },
         "2026-04-03T00:00:00Z",
     );
     let source_b = build_node(
@@ -91,10 +100,12 @@ fn appends_source_alias_when_names_conflict() {
         "b.example.com",
         443,
         ProxyTransport::Tcp,
-        Some("uuid-b"),
-        None,
-        None,
-        Some("hk"),
+        NodeMeta {
+            uuid: Some("uuid-b"),
+            password: None,
+            path: None,
+            region: Some("hk"),
+        },
         "2026-04-03T00:00:00Z",
     );
 
@@ -119,10 +130,12 @@ fn transport_options_participate_in_dedupe_key() {
         "same.example.com",
         8443,
         ProxyTransport::Ws,
-        Some("uuid-same"),
-        None,
-        Some("/path-a"),
-        Some("hk"),
+        NodeMeta {
+            uuid: Some("uuid-same"),
+            password: None,
+            path: Some("/path-a"),
+            region: Some("hk"),
+        },
         "2026-04-03T00:00:00Z",
     );
     let node_b = build_node(
@@ -131,10 +144,12 @@ fn transport_options_participate_in_dedupe_key() {
         "same.example.com",
         8443,
         ProxyTransport::Ws,
-        Some("uuid-same"),
-        None,
-        Some("/path-b"),
-        Some("hk"),
+        NodeMeta {
+            uuid: Some("uuid-same"),
+            password: None,
+            path: Some("/path-b"),
+            region: Some("hk"),
+        },
         "2026-04-03T00:00:01Z",
     );
 
@@ -153,10 +168,12 @@ fn empty_source_does_not_affect_aggregation_and_groups_by_region() {
         "hk.example.com",
         443,
         ProxyTransport::Tcp,
-        None,
-        Some("pwd-hk"),
-        None,
-        Some("hk"),
+        NodeMeta {
+            uuid: None,
+            password: Some("pwd-hk"),
+            path: None,
+            region: Some("hk"),
+        },
         "2026-04-03T00:00:00Z",
     );
     let sg = build_node(
@@ -165,10 +182,12 @@ fn empty_source_does_not_affect_aggregation_and_groups_by_region() {
         "sg.example.com",
         443,
         ProxyTransport::Tcp,
-        None,
-        Some("pwd-sg"),
-        None,
-        Some("sg"),
+        NodeMeta {
+            uuid: None,
+            password: Some("pwd-sg"),
+            path: None,
+            region: Some("sg"),
+        },
         "2026-04-03T00:00:00Z",
     );
     let unknown = build_node(
@@ -177,10 +196,12 @@ fn empty_source_does_not_affect_aggregation_and_groups_by_region() {
         "no-region.example.com",
         443,
         ProxyTransport::Tcp,
-        None,
-        Some("pwd-none"),
-        None,
-        None,
+        NodeMeta {
+            uuid: None,
+            password: Some("pwd-none"),
+            path: None,
+            region: None,
+        },
         "2026-04-03T00:00:00Z",
     );
 
@@ -201,26 +222,85 @@ fn empty_source_does_not_affect_aggregation_and_groups_by_region() {
     assert!(!result.region_groups.contains_key("unknown"));
 }
 
+#[test]
+fn aggregates_1000_nodes_within_500ms() {
+    let source_a = (0..500)
+        .map(|index| {
+            build_node(
+                "source-a",
+                &format!("A-{index}"),
+                &format!("a-{index}.example.com"),
+                3000 + index as u16,
+                ProxyTransport::Ws,
+                NodeMeta {
+                    uuid: Some(&format!("uuid-a-{index}")),
+                    password: None,
+                    path: Some("/ws"),
+                    region: Some("hk"),
+                },
+                "2026-04-04T00:00:00Z",
+            )
+        })
+        .collect::<Vec<_>>();
+    let source_b = (0..500)
+        .map(|index| {
+            build_node(
+                "source-b",
+                &format!("B-{index}"),
+                &format!("b-{index}.example.com"),
+                4000 + index as u16,
+                ProxyTransport::Tcp,
+                NodeMeta {
+                    uuid: Some(&format!("uuid-b-{index}")),
+                    password: None,
+                    path: None,
+                    region: Some("sg"),
+                },
+                "2026-04-04T00:00:00Z",
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let started_at = Instant::now();
+    let result = Aggregator.aggregate(&[
+        SourceNodes::new("source-a", source_a),
+        SourceNodes::new("source-b", source_b),
+    ]);
+    let elapsed = started_at.elapsed();
+
+    assert_eq!(result.nodes.len(), 1000);
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "1000 节点聚合耗时应小于 500ms，当前: {:?}",
+        elapsed
+    );
+}
+
+#[derive(Default)]
+struct NodeMeta<'a> {
+    uuid: Option<&'a str>,
+    password: Option<&'a str>,
+    path: Option<&'a str>,
+    region: Option<&'a str>,
+}
+
 fn build_node(
     source_id: &str,
     name: &str,
     server: &str,
     port: u16,
     transport: ProxyTransport,
-    uuid: Option<&str>,
-    password: Option<&str>,
-    path: Option<&str>,
-    region: Option<&str>,
+    meta: NodeMeta<'_>,
     updated_at: &str,
 ) -> app_common::ProxyNode {
     let mut extra = BTreeMap::<String, Value>::new();
-    if let Some(uuid) = uuid {
+    if let Some(uuid) = meta.uuid {
         extra.insert("uuid".to_string(), Value::String(uuid.to_string()));
     }
-    if let Some(password) = password {
+    if let Some(password) = meta.password {
         extra.insert("password".to_string(), Value::String(password.to_string()));
     }
-    if let Some(path) = path {
+    if let Some(path) = meta.path {
         extra.insert("path".to_string(), json!(path));
     }
 
@@ -238,7 +318,7 @@ fn build_node(
         extra,
         source_id: source_id.to_string(),
         tags: Vec::new(),
-        region: region.map(ToString::to_string),
+        region: meta.region.map(ToString::to_string),
         updated_at: updated_at.to_string(),
     }
 }

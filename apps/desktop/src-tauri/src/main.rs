@@ -12,7 +12,7 @@ fn main() {
     tauri::Builder::default()
         .manage(manager)
         .setup(|app| {
-            setup_tray(&app.handle())?;
+            setup_tray(app.handle())?;
             Ok(())
         })
         .on_window_event(|window, event| {
