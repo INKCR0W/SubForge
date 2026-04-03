@@ -6,7 +6,7 @@
 
 ## 环境要求
 
-- Rust stable（>= 1.85）
+- Rust stable（>= 1.94.1）
 - Node.js 24.x
 - pnpm 10.x
 
