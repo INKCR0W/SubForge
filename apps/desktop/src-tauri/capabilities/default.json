@@ -3,5 +3,11 @@
   "identifier": "main-capability",
   "description": "Main window capability for SubForge desktop",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:app:default",
+    "core:event:default",
+    "core:window:default",
+    "core:tray:default",
+    "core:webview:deny-internal-toggle-devtools"
+  ]
 }

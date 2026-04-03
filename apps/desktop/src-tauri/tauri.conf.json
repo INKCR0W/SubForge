@@ -17,11 +17,12 @@
         "title": "SubForge",
         "width": 1280,
         "height": 800,
-        "resizable": true
+        "resizable": true,
+        "devtools": false
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; connect-src ipc: http://ipc.localhost;"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src ipc: http://ipc.localhost;"
     }
   },
   "bundle": {

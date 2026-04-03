@@ -5,6 +5,8 @@ mod core_manager_events;
 mod helpers;
 mod tray;
 mod types;
+#[cfg(test)]
+mod webview_security_tests;
 mod window_lifecycle;
 
 pub(crate) use commands::{

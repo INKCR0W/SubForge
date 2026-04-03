@@ -40,6 +40,11 @@ impl CoreManager {
         }
 
         let path = normalize_path(&request.path);
+        if is_admin_token_rotation_path(&path) {
+            return Err(anyhow!(
+                "安全策略限制：前端 IPC 不允许调用 /api/admin-token/rotate"
+            ));
+        }
         if path.starts_with("/api/") && admin_token.is_none() {
             return Err(anyhow!(
                 "当前会话没有管理 token，请先通过 GUI 启动 Core 再调用管理 API"
@@ -190,5 +195,33 @@ impl CoreManager {
             }
         }
         Ok(())
+    }
+}
+
+fn is_admin_token_rotation_path(path: &str) -> bool {
+    let normalized = normalize_path(path);
+    let route = normalized.split('?').next().unwrap_or_default();
+    route.eq_ignore_ascii_case("/api/admin-token/rotate")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_admin_token_rotation_path;
+
+    #[test]
+    fn admin_token_rotate_path_is_blocked() {
+        assert!(is_admin_token_rotation_path("/api/admin-token/rotate"));
+        assert!(is_admin_token_rotation_path("api/admin-token/rotate"));
+        assert!(is_admin_token_rotation_path(
+            "/api/admin-token/rotate?from=desktop"
+        ));
+        assert!(is_admin_token_rotation_path("/API/ADMIN-TOKEN/ROTATE"));
+    }
+
+    #[test]
+    fn non_admin_token_paths_are_not_blocked() {
+        assert!(!is_admin_token_rotation_path("/api/tokens/p-1/rotate"));
+        assert!(!is_admin_token_rotation_path("/api/system/status"));
+        assert!(!is_admin_token_rotation_path("/health"));
     }
 }
