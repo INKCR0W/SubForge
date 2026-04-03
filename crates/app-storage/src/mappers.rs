@@ -1,7 +1,7 @@
 use app_common::{AppSetting, Plugin, Profile, SourceInstance};
 use rusqlite::Row;
 
-use crate::{ExportToken, RefreshJob};
+use crate::{ExportToken, RefreshJob, ScriptLog};
 pub(crate) fn map_plugin_row(row: &Row<'_>) -> rusqlite::Result<Plugin> {
     Ok(Plugin {
         id: row.get("id")?,
@@ -68,5 +68,17 @@ pub(crate) fn map_export_token_row(row: &Row<'_>) -> rusqlite::Result<ExportToke
         token_type: row.get("token_type")?,
         created_at: row.get("created_at")?,
         expires_at: row.get("expires_at")?,
+    })
+}
+
+pub(crate) fn map_script_log_row(row: &Row<'_>) -> rusqlite::Result<ScriptLog> {
+    Ok(ScriptLog {
+        id: row.get("id")?,
+        refresh_job_id: row.get("refresh_job_id")?,
+        source_instance_id: row.get("source_instance_id")?,
+        plugin_id: row.get("plugin_id")?,
+        level: row.get("level")?,
+        message: row.get("message")?,
+        created_at: row.get("created_at")?,
     })
 }

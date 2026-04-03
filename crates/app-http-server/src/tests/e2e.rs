@@ -745,6 +745,38 @@ async fn e2e_script_source_refresh_via_management_api() {
     assert_eq!(refresh_jobs[0].status, "success");
     assert_eq!(refresh_jobs[0].node_count, Some(3));
 
+    let logs_response = app
+        .clone()
+        .oneshot(admin_request(
+            Method::GET,
+            &format!("/api/logs?source_id={source_id}&limit=5&include_script_logs=true"),
+            Body::empty(),
+        ))
+        .await
+        .expect("读取脚本来源 logs 失败");
+    assert_eq!(logs_response.status(), StatusCode::OK);
+    let logs_payload = read_json(logs_response).await;
+    let logs = logs_payload
+        .get("logs")
+        .and_then(Value::as_array)
+        .expect("脚本 logs 响应缺少数组字段");
+    assert!(!logs.is_empty());
+    let first = logs[0].as_object().expect("日志项应为对象");
+    let script_logs = first
+        .get("script_logs")
+        .and_then(Value::as_array)
+        .expect("include_script_logs=true 时应返回 script_logs");
+    assert!(!script_logs.is_empty());
+    assert!(script_logs.iter().all(|entry| {
+        entry.get("source_id").and_then(Value::as_str) == Some(source_id.as_str())
+    }));
+    assert!(script_logs.iter().any(|entry| {
+        entry
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|message| message.contains("script-mock fetch subscription"))
+    }));
+
     let event = wait_refresh_complete_event(&mut event_receiver, &source_id).await;
     assert_eq!(event.event, "refresh:complete");
     assert_eq!(event.source_id.as_deref(), Some(source_id.as_str()));

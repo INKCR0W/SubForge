@@ -170,6 +170,7 @@ async fn engine_refresh_source_executes_script_pipeline_and_persists_state() {
                 local counter = (state.counter or 0) + 1
                 local node_name = "script-" .. tostring(counter)
                 local content = "ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@example.com:443#" .. node_name
+                log.info("fetch token=abc123 stage=fetch")
                 return {
                     ok = true,
                     subscription = { content = content },
@@ -241,6 +242,34 @@ async fn engine_refresh_source_executes_script_pipeline_and_persists_state() {
         .expect("读取 refresh_jobs 失败");
     assert_eq!(jobs.len(), 2);
     assert!(jobs.iter().all(|job| job.status == "success"));
+
+    let script_log_repository = ScriptLogRepository::new(&db);
+    let script_logs = script_log_repository
+        .list_by_refresh_job_ids(
+            &[
+                first_run.refresh_job_id.clone(),
+                second_run.refresh_job_id.clone(),
+            ],
+            10,
+        )
+        .expect("读取脚本日志失败");
+    assert_eq!(script_logs.len(), 2);
+    assert!(
+        script_logs
+            .iter()
+            .all(|log| log.source_instance_id == source.source.id)
+    );
+    assert!(
+        script_logs
+            .iter()
+            .all(|log| log.message.contains("token=***")),
+        "脚本日志中的敏感键值应被脱敏"
+    );
+    assert!(
+        script_logs
+            .iter()
+            .all(|log| !log.message.contains("abc123"))
+    );
 
     cleanup_dir(&temp_root);
 }

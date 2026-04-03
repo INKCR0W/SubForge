@@ -102,7 +102,7 @@ impl<'a> Engine<'a> {
             PluginType::Script => {
                 let script_executor = ScriptExecutor::new(self.db, Arc::clone(&self.secret_store));
                 script_executor
-                    .execute(&source, &loaded_plugin, trigger_type)
+                    .execute(&source, &loaded_plugin, trigger_type, &refresh_job_id)
                     .await
                     .map(|value| (value.nodes, value.subscription_userinfo))
             }

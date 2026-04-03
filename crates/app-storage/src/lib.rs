@@ -11,8 +11,9 @@ mod tests;
 
 pub use db::Database;
 pub use error::{StorageError, StorageResult};
-pub use models::{ExportToken, NodeCacheEntry, RefreshJob};
+pub use models::{ExportToken, NodeCacheEntry, RefreshJob, ScriptLog};
 pub use repositories::{
     ExportTokenRepository, NodeCacheRepository, PluginRepository, ProfileRepository,
-    RefreshJobRepository, SettingsRepository, SourceConfigRepository, SourceRepository,
+    RefreshJobRepository, ScriptLogRepository, SettingsRepository, SourceConfigRepository,
+    SourceRepository,
 };

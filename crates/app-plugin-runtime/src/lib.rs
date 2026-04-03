@@ -8,4 +8,4 @@ mod tests;
 
 pub use error::{PluginRuntimeError, PluginRuntimeResult};
 pub use loader::{LoadedPlugin, PluginLoader};
-pub use lua_sandbox::{LuaSandbox, LuaSandboxConfig};
+pub use lua_sandbox::{LuaSandbox, LuaSandboxConfig, RuntimeLogLevel, RuntimeLogSink};

@@ -8,7 +8,7 @@ use app_common::{AppSetting, ConfigSchema, Plugin, Profile, ProxyNode, SourceIns
 use app_core::{Engine, PluginInstallService, SourceService};
 use app_storage::{
     ExportTokenRepository, NodeCacheRepository, PluginRepository, ProfileRepository,
-    RefreshJobRepository, SettingsRepository, SourceRepository,
+    RefreshJobRepository, ScriptLogRepository, SettingsRepository, SourceRepository,
 };
 use axum::Json;
 use axum::extract::{Multipart, Path as AxumPath, Query, State};
@@ -162,6 +162,8 @@ pub(crate) struct LogsQuery {
     pub(crate) status: Option<String>,
     #[serde(default)]
     pub(crate) source_id: Option<String>,
+    #[serde(default)]
+    pub(crate) include_script_logs: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -176,6 +178,18 @@ pub(crate) struct RefreshLogDto {
     pub(crate) node_count: Option<i64>,
     pub(crate) error_code: Option<String>,
     pub(crate) error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) script_logs: Option<Vec<ScriptLogDto>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ScriptLogDto {
+    pub(crate) id: String,
+    pub(crate) source_id: String,
+    pub(crate) plugin_id: String,
+    pub(crate) level: String,
+    pub(crate) message: String,
+    pub(crate) created_at: String,
 }
 
 #[derive(Debug, Serialize)]

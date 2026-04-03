@@ -12,6 +12,7 @@ fn open_in_memory_runs_migrations() -> StorageResult<()> {
     let expected = vec![
         "app_settings",
         "export_tokens",
+        "script_logs",
         "plugins",
         "profile_sources",
         "profiles",
@@ -94,6 +95,18 @@ fn migration_creates_expected_columns() -> StorageResult<()> {
                 "token_type",
                 "created_at",
                 "expires_at",
+            ],
+        ),
+        (
+            "script_logs",
+            vec![
+                "id",
+                "refresh_job_id",
+                "source_instance_id",
+                "plugin_id",
+                "level",
+                "message",
+                "created_at",
             ],
         ),
         ("app_settings", vec!["key", "value", "updated_at"]),

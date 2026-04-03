@@ -1,6 +1,7 @@
 use crate::{
     Database, ExportToken, ExportTokenRepository, NodeCacheRepository, ProfileRepository,
-    RefreshJob, RefreshJobRepository, SourceRepository, StorageResult,
+    RefreshJob, RefreshJobRepository, ScriptLog, ScriptLogRepository, SourceRepository,
+    StorageResult,
 };
 
 use super::support::{sample_profile, sample_proxy_node, sample_source};
@@ -301,6 +302,83 @@ fn export_token_repository_rotates_primary_token_with_grace_window() -> StorageR
         Ok(count)
     })?;
     assert_eq!(token_count, 2, "应清理已过期的旧 token");
+
+    Ok(())
+}
+
+#[test]
+fn script_log_repository_supports_refresh_job_batch_query() -> StorageResult<()> {
+    let db = Database::open_in_memory()?;
+    let source_repository = SourceRepository::new(&db);
+    let refresh_repository = RefreshJobRepository::new(&db);
+    let script_log_repository = ScriptLogRepository::new(&db);
+
+    let source = sample_source("source-script-log", "vendor.example.script");
+    source_repository.insert(&source)?;
+
+    let job_a = RefreshJob {
+        id: "refresh-job-script-a".to_string(),
+        source_instance_id: source.id.clone(),
+        trigger_type: "manual".to_string(),
+        status: "running".to_string(),
+        started_at: Some("2026-04-02T09:00:00Z".to_string()),
+        finished_at: None,
+        node_count: None,
+        error_code: None,
+        error_message: None,
+    };
+    let job_b = RefreshJob {
+        id: "refresh-job-script-b".to_string(),
+        source_instance_id: source.id.clone(),
+        trigger_type: "scheduled".to_string(),
+        status: "running".to_string(),
+        started_at: Some("2026-04-02T09:05:00Z".to_string()),
+        finished_at: None,
+        node_count: None,
+        error_code: None,
+        error_message: None,
+    };
+    refresh_repository.insert(&job_a)?;
+    refresh_repository.insert(&job_b)?;
+
+    for index in 0..3 {
+        script_log_repository.insert(&ScriptLog {
+            id: format!("script-log-a-{index}"),
+            refresh_job_id: job_a.id.clone(),
+            source_instance_id: source.id.clone(),
+            plugin_id: "vendor.example.script".to_string(),
+            level: if index == 0 { "warn" } else { "info" }.to_string(),
+            message: format!("A-{index}"),
+            created_at: format!("2026-04-02T09:00:0{index}Z"),
+        })?;
+    }
+    script_log_repository.insert(&ScriptLog {
+        id: "script-log-b-0".to_string(),
+        refresh_job_id: job_b.id.clone(),
+        source_instance_id: source.id.clone(),
+        plugin_id: "vendor.example.script".to_string(),
+        level: "error".to_string(),
+        message: "B-0".to_string(),
+        created_at: "2026-04-02T09:05:00Z".to_string(),
+    })?;
+
+    let logs = script_log_repository.list_by_refresh_job_ids(&[job_a.id.clone(), job_b.id], 2)?;
+    assert_eq!(logs.len(), 3, "按 job 限制每个最多 2 条");
+
+    let logs_a = logs
+        .iter()
+        .filter(|item| item.refresh_job_id == job_a.id)
+        .collect::<Vec<_>>();
+    assert_eq!(logs_a.len(), 2);
+    assert_eq!(logs_a[0].message, "A-0");
+    assert_eq!(logs_a[1].message, "A-1");
+
+    let logs_b = logs
+        .iter()
+        .filter(|item| item.refresh_job_id == "refresh-job-script-b")
+        .collect::<Vec<_>>();
+    assert_eq!(logs_b.len(), 1);
+    assert_eq!(logs_b[0].level, "error");
 
     Ok(())
 }

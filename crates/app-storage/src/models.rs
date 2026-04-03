@@ -30,3 +30,14 @@ pub struct ExportToken {
     pub created_at: String,
     pub expires_at: Option<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptLog {
+    pub id: String,
+    pub refresh_job_id: String,
+    pub source_instance_id: String,
+    pub plugin_id: String,
+    pub level: String,
+    pub message: String,
+    pub created_at: String,
+}

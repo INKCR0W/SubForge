@@ -51,7 +51,28 @@ const DISABLED_GLOBALS: &[&str] = &[
     "package",
 ];
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeLogLevel {
+    Info,
+    Warn,
+    Error,
+}
+
+impl RuntimeLogLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Warn => "warn",
+            Self::Error => "error",
+        }
+    }
+}
+
+pub trait RuntimeLogSink: Send + Sync {
+    fn emit(&self, level: RuntimeLogLevel, message: &str);
+}
+
+#[derive(Clone)]
 pub struct LuaSandboxConfig {
     pub memory_limit_bytes: usize,
     pub timeout: Duration,
@@ -60,6 +81,25 @@ pub struct LuaSandboxConfig {
     pub network_profile: String,
     pub plugin_id: String,
     pub secret_store: Arc<dyn SecretStore>,
+    pub log_sink: Option<Arc<dyn RuntimeLogSink>>,
+}
+
+impl std::fmt::Debug for LuaSandboxConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LuaSandboxConfig")
+            .field("memory_limit_bytes", &self.memory_limit_bytes)
+            .field("timeout", &self.timeout)
+            .field("max_instructions", &self.max_instructions)
+            .field("instruction_hook_step", &self.instruction_hook_step)
+            .field("network_profile", &self.network_profile)
+            .field("plugin_id", &self.plugin_id)
+            .field("secret_store", &"<secret-store>")
+            .field(
+                "log_sink",
+                &self.log_sink.as_ref().map(|_| "<runtime-log-sink>"),
+            )
+            .finish()
+    }
 }
 
 impl Default for LuaSandboxConfig {
@@ -72,6 +112,7 @@ impl Default for LuaSandboxConfig {
             network_profile: DEFAULT_NETWORK_PROFILE.to_string(),
             plugin_id: DEFAULT_PLUGIN_ID.to_string(),
             secret_store: Arc::new(MemorySecretStore::new()),
+            log_sink: None,
         }
     }
 }
@@ -109,6 +150,11 @@ impl LuaSandboxConfig {
 
     pub fn with_secret_store(mut self, secret_store: Arc<dyn SecretStore>) -> Self {
         self.secret_store = secret_store;
+        self
+    }
+
+    pub fn with_log_sink(mut self, log_sink: Arc<dyn RuntimeLogSink>) -> Self {
+        self.log_sink = Some(log_sink);
         self
     }
 }
@@ -154,6 +200,7 @@ impl LuaSandbox {
             Arc::clone(&cookie_store),
             secret_scope,
             Arc::clone(&http_request_counter),
+            config.log_sink.clone(),
         )?;
 
         Ok(Self {
