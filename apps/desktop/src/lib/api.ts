@@ -2,7 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CoreApiResponse,
   CoreStatus,
+  LogsResponse,
   RefreshAllSourcesResult,
+  RefreshLog,
   RefreshSourceResponse,
   SettingsResponse,
   SourceListResponse,
@@ -102,6 +104,46 @@ export async function refreshAllSources(): Promise<RefreshAllSourcesResult> {
     succeeded,
     failed,
   };
+}
+
+export async function fetchRefreshLogs(
+  limit = 20,
+  status?: "running" | "success" | "failed",
+): Promise<LogsResponse> {
+  const params = new URLSearchParams();
+  params.set("limit", String(limit));
+  if (status) {
+    params.set("status", status);
+  }
+  const payload = await requestJson<{
+    logs: Array<{
+      id: string;
+      source_id: string;
+      source_name?: string | null;
+      trigger_type: string;
+      status: string;
+      started_at?: string | null;
+      finished_at?: string | null;
+      node_count?: number | null;
+      error_code?: string | null;
+      error_message?: string | null;
+    }>;
+  }>("GET", `/api/logs?${params.toString()}`);
+
+  const logs: RefreshLog[] = payload.logs.map((item) => ({
+    id: item.id,
+    sourceId: item.source_id,
+    sourceName: item.source_name ?? null,
+    triggerType: item.trigger_type,
+    status: item.status,
+    startedAt: item.started_at ?? null,
+    finishedAt: item.finished_at ?? null,
+    nodeCount: item.node_count ?? null,
+    errorCode: item.error_code ?? null,
+    errorMessage: item.error_message ?? null,
+  }));
+
+  return { logs };
 }
 
 async function requestJson<T>(

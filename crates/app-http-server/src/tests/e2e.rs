@@ -149,6 +149,81 @@ async fn e2e_import_source_refresh_and_raw_profile_output() {
     assert_eq!(refresh_jobs.len(), 1);
     assert_eq!(refresh_jobs[0].status, "success");
     assert_eq!(refresh_jobs[0].node_count, Some(3));
+    let failed_job = RefreshJob {
+        id: "refresh-job-failed-manual".to_string(),
+        source_instance_id: source_id.clone(),
+        trigger_type: "manual".to_string(),
+        status: "running".to_string(),
+        started_at: Some("9999-01-01T00:00:00Z".to_string()),
+        finished_at: None,
+        node_count: None,
+        error_code: None,
+        error_message: None,
+    };
+    refresh_repository
+        .insert(&failed_job)
+        .expect("写入失败 refresh job 失败");
+    refresh_repository
+        .mark_failed(
+            &failed_job.id,
+            "9999-01-01T00:00:01Z",
+            "E_HTTP_5XX",
+            "upstream 502",
+        )
+        .expect("更新失败 refresh job 失败");
+
+    let logs_response = app
+        .clone()
+        .oneshot(admin_request(
+            Method::GET,
+            "/api/logs?limit=5",
+            Body::empty(),
+        ))
+        .await
+        .expect("读取 logs 失败");
+    assert_eq!(logs_response.status(), StatusCode::OK);
+    let logs_payload = read_json(logs_response).await;
+    let logs = logs_payload
+        .get("logs")
+        .and_then(Value::as_array)
+        .expect("logs 响应缺少数组字段");
+    assert!(!logs.is_empty());
+    assert!(logs.iter().any(|entry| {
+        entry.get("source_id").and_then(Value::as_str) == Some(source_id.as_str())
+            && entry.get("status").and_then(Value::as_str) == Some("success")
+    }));
+    assert!(logs.iter().any(|entry| {
+        entry.get("source_id").and_then(Value::as_str) == Some(source_id.as_str())
+            && entry.get("status").and_then(Value::as_str) == Some("failed")
+            && entry.get("error_code").and_then(Value::as_str) == Some("E_HTTP_5XX")
+    }));
+
+    let failed_logs_response = app
+        .clone()
+        .oneshot(admin_request(
+            Method::GET,
+            "/api/logs?status=failed&limit=5",
+            Body::empty(),
+        ))
+        .await
+        .expect("读取失败 logs 失败");
+    assert_eq!(failed_logs_response.status(), StatusCode::OK);
+    let failed_logs_payload = read_json(failed_logs_response).await;
+    let failed_logs = failed_logs_payload
+        .get("logs")
+        .and_then(Value::as_array)
+        .expect("failed logs 响应缺少数组字段");
+    assert!(!failed_logs.is_empty());
+    assert!(
+        failed_logs
+            .iter()
+            .all(|entry| { entry.get("status").and_then(Value::as_str) == Some("failed") })
+    );
+    assert!(
+        failed_logs.iter().any(|entry| {
+            entry.get("source_name").and_then(Value::as_str) == Some("E2E Source")
+        })
+    );
 
     let event = wait_refresh_complete_event(&mut event_receiver, &source_id).await;
     assert_eq!(event.event, "refresh:complete");

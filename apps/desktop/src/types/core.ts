@@ -68,3 +68,20 @@ export type RefreshAllSourcesResult = {
   succeeded: string[];
   failed: Array<{ sourceId: string; reason: string }>;
 };
+
+export type RefreshLog = {
+  id: string;
+  sourceId: string;
+  sourceName: string | null;
+  triggerType: string;
+  status: "running" | "success" | "failed" | string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  nodeCount: number | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+};
+
+export type LogsResponse = {
+  logs: RefreshLog[];
+};

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use app_secrets::MemorySecretStore;
-use app_storage::{ExportTokenRepository, RefreshJobRepository};
+use app_storage::{ExportTokenRepository, RefreshJob, RefreshJobRepository};
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::header::{CONTENT_TYPE, HOST};

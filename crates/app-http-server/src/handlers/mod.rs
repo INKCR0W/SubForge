@@ -35,6 +35,7 @@ use crate::state::{
 
 mod events;
 mod health;
+mod logs;
 mod plugins;
 mod profiles;
 mod settings;
@@ -42,6 +43,7 @@ mod sources;
 
 pub(crate) use events::events_handler;
 pub(crate) use health::health_handler;
+pub(crate) use logs::list_logs_handler;
 pub(crate) use plugins::{delete_plugin_handler, import_plugin_handler, list_plugins_handler};
 pub(crate) use profiles::{
     create_profile_handler, delete_profile_handler, get_profile_base64_handler,
@@ -121,6 +123,33 @@ pub(crate) struct RefreshProfileResponse {
     pub(crate) profile_id: String,
     pub(crate) refreshed_sources: usize,
     pub(crate) node_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct LogsQuery {
+    #[serde(default)]
+    pub(crate) limit: Option<usize>,
+    #[serde(default)]
+    pub(crate) status: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct RefreshLogDto {
+    pub(crate) id: String,
+    pub(crate) source_id: String,
+    pub(crate) source_name: Option<String>,
+    pub(crate) trigger_type: String,
+    pub(crate) status: String,
+    pub(crate) started_at: Option<String>,
+    pub(crate) finished_at: Option<String>,
+    pub(crate) node_count: Option<i64>,
+    pub(crate) error_code: Option<String>,
+    pub(crate) error_message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct LogsResponse {
+    pub(crate) logs: Vec<RefreshLogDto>,
 }
 
 #[derive(Debug, Clone, Serialize)]

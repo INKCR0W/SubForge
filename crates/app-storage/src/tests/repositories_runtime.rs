@@ -114,6 +114,15 @@ fn refresh_job_repository_records_success_and_failure() -> StorageResult<()> {
     assert_eq!(by_source[0].id, success_job.id);
     assert_eq!(by_source[1].id, failed_job.id);
 
+    let recent = refresh_repository.list_recent(10)?;
+    assert_eq!(recent.len(), 2);
+    assert_eq!(recent[0].id, failed_job.id);
+    assert_eq!(recent[1].id, success_job.id);
+
+    let failed_recent = refresh_repository.list_recent_by_status("failed", 10)?;
+    assert_eq!(failed_recent.len(), 1);
+    assert_eq!(failed_recent[0].id, failed_job.id);
+
     Ok(())
 }
 

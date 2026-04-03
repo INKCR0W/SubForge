@@ -1,7 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { Skeleton } from "../../components/skeleton";
-import { fetchSystemStatus, refreshAllSources } from "../../lib/api";
+import {
+  fetchRefreshLogs,
+  fetchSystemStatus,
+  refreshAllSources,
+} from "../../lib/api";
 import { useCoreUiStore } from "../../stores/core-ui-store";
 
 function StatusCard({
@@ -41,6 +45,20 @@ export default function DashboardPage() {
     enabled: status?.running === true,
   });
 
+  const recentLogsQuery = useQuery({
+    queryKey: ["dashboard-logs", "recent"],
+    queryFn: () => fetchRefreshLogs(10),
+    refetchInterval: 15_000,
+    enabled: status?.running === true,
+  });
+
+  const recentErrorLogsQuery = useQuery({
+    queryKey: ["dashboard-logs", "failed"],
+    queryFn: () => fetchRefreshLogs(5, "failed"),
+    refetchInterval: 15_000,
+    enabled: status?.running === true,
+  });
+
   const refreshAllMutation = useMutation({
     mutationFn: refreshAllSources,
     onSuccess: (result) => {
@@ -55,6 +73,7 @@ export default function DashboardPage() {
         variant: failedCount > 0 ? "warning" : "default",
       });
       void queryClient.invalidateQueries({ queryKey: ["dashboard-system-status"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard-logs"] });
     },
     onError: (mutationError) => {
       addToast({
@@ -71,6 +90,8 @@ export default function DashboardPage() {
     systemStatusQuery.data?.lastRefreshAt ?? lastRefreshAtFromEvents ?? null;
 
   const recentEvents = useMemo(() => eventHistory.slice(0, 8), [eventHistory]);
+  const recentLogs = recentLogsQuery.data?.logs ?? [];
+  const recentErrorLogs = recentErrorLogsQuery.data?.logs ?? [];
 
   const handleRefreshAll = () => {
     void refreshAllMutation.mutateAsync();
@@ -161,6 +182,65 @@ export default function DashboardPage() {
           </ul>
         ) : (
           <p className="mt-3 text-sm text-[var(--muted-text)]">暂无事件。</p>
+        )}
+      </article>
+
+      <article className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/45 p-4">
+        <h3 className="text-sm font-semibold text-[var(--app-text)]">最近刷新</h3>
+        {recentLogsQuery.isLoading ? (
+          <div className="mt-3 space-y-2">
+            <Skeleton className="h-16" />
+            <Skeleton className="h-16" />
+          </div>
+        ) : recentLogs.length > 0 ? (
+          <ul className="mt-3 space-y-2 text-sm">
+            {recentLogs.map((log) => (
+              <li
+                key={log.id}
+                className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-bg)]/55 px-3 py-2"
+              >
+                <p className="font-medium text-[var(--accent-strong)]">
+                  {log.sourceName ?? log.sourceId} · {log.status}
+                </p>
+                <p className="text-[var(--app-text)]">
+                  触发：{log.triggerType} | 节点：{log.nodeCount ?? "-"}
+                </p>
+                <p className="text-xs text-[var(--muted-text)]">
+                  开始：{formatTimestamp(log.startedAt)} | 结束：{formatTimestamp(log.finishedAt)}
+                </p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-sm text-[var(--muted-text)]">暂无刷新记录。</p>
+        )}
+      </article>
+
+      <article className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/45 p-4">
+        <h3 className="text-sm font-semibold text-[var(--app-text)]">最近错误</h3>
+        {recentErrorLogsQuery.isLoading ? (
+          <div className="mt-3 space-y-2">
+            <Skeleton className="h-16" />
+          </div>
+        ) : recentErrorLogs.length > 0 ? (
+          <ul className="mt-3 space-y-2 text-sm">
+            {recentErrorLogs.map((log) => (
+              <li
+                key={log.id}
+                className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2"
+              >
+                <p className="font-medium text-rose-300">
+                  {log.sourceName ?? log.sourceId} · {log.errorCode ?? "E_INTERNAL"}
+                </p>
+                <p className="text-[var(--app-text)]">{log.errorMessage ?? "未知错误"}</p>
+                <p className="text-xs text-[var(--muted-text)]">
+                  时间：{formatTimestamp(log.finishedAt ?? log.startedAt)}
+                </p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-sm text-[var(--muted-text)]">暂无错误记录。</p>
         )}
       </article>
     </section>

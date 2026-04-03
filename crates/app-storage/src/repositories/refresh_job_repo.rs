@@ -107,4 +107,39 @@ impl<'a> RefreshJobRepository<'a> {
             Ok(items)
         })
     }
+
+    pub fn list_recent(&self, limit: usize) -> StorageResult<Vec<RefreshJob>> {
+        self.db.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT id, source_instance_id, trigger_type, status, started_at, finished_at, node_count, error_code, error_message
+                 FROM refresh_jobs
+                 ORDER BY COALESCE(finished_at, started_at, '') DESC, id DESC
+                 LIMIT ?1",
+            )?;
+            let items = statement
+                .query_map([limit as i64], map_refresh_job_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(items)
+        })
+    }
+
+    pub fn list_recent_by_status(
+        &self,
+        status: &str,
+        limit: usize,
+    ) -> StorageResult<Vec<RefreshJob>> {
+        self.db.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT id, source_instance_id, trigger_type, status, started_at, finished_at, node_count, error_code, error_message
+                 FROM refresh_jobs
+                 WHERE status = ?1
+                 ORDER BY COALESCE(finished_at, started_at, '') DESC, id DESC
+                 LIMIT ?2",
+            )?;
+            let items = statement
+                .query_map(params![status, limit as i64], map_refresh_job_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(items)
+        })
+    }
 }
