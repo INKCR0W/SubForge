@@ -36,4 +36,4 @@ Invoke-Step -Name "全仓 clippy 零 warning 闸门" -Action {
     cargo clippy --workspace --all-targets -- -D warnings
 }
 
-Write-Host "P8.6 Gate 校验通过。"
+Write-Host "E2E Gate 校验通过。"
