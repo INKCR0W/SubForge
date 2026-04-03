@@ -2,7 +2,7 @@
 
 export default defineConfig({
   lang: "zh-CN",
-  title: "SubForge 文档",
+  title: "SubForge",
   description: "本地配置聚合平台的使用与部署文档",
   lastUpdated: true,
   cleanUrls: true,
@@ -47,7 +47,7 @@ export default defineConfig({
       }
     ],
     socialLinks: [
-      { icon: "github", link: "https://github.com/INKCR0W/SubForge" }
+      { icon: "github", link: "https://github.com/SubFoundry/SubForge" }
     ],
     footer: {
       message: "SubForge Documentation",
