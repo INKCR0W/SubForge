@@ -6,6 +6,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use reqwest::Method;
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::core_manager::CoreManager;
 use super::helpers::{build_plugin_multipart_body, normalize_path};
@@ -54,6 +55,7 @@ impl CoreManager {
         let method = Method::from_bytes(request.method.as_bytes())
             .with_context(|| format!("不支持的 HTTP 方法: {}", request.method))?;
         let url = format!("{base_url}{path}");
+        let response_redaction_token = admin_token.clone();
 
         let mut builder = self.client.request(method, &url);
         if let Some(token) = admin_token {
@@ -80,6 +82,8 @@ impl CoreManager {
             })
             .collect::<BTreeMap<_, _>>();
         let body = response.text().await.context("读取 Core API 响应失败")?;
+        let (headers, body) =
+            sanitize_core_response(headers, body, response_redaction_token.as_deref());
 
         Ok(CoreApiResponse {
             status,
@@ -130,7 +134,7 @@ impl CoreManager {
         let response = self
             .client
             .request(Method::POST, format!("{base_url}/api/plugins/import"))
-            .bearer_auth(token)
+            .bearer_auth(&token)
             .header(
                 reqwest::header::CONTENT_TYPE,
                 format!("multipart/form-data; boundary={boundary}"),
@@ -152,6 +156,7 @@ impl CoreManager {
             })
             .collect::<BTreeMap<_, _>>();
         let body = response.text().await.context("读取插件导入响应失败")?;
+        let (headers, body) = sanitize_core_response(headers, body, Some(token.as_str()));
 
         Ok(CoreApiResponse {
             status,
@@ -204,9 +209,65 @@ fn is_admin_token_rotation_path(path: &str) -> bool {
     route.eq_ignore_ascii_case("/api/admin-token/rotate")
 }
 
+const REDACTED_VALUE: &str = "***REDACTED***";
+
+fn sanitize_core_response(
+    mut headers: BTreeMap<String, String>,
+    body: String,
+    admin_token: Option<&str>,
+) -> (BTreeMap<String, String>, String) {
+    if let Some(token) = admin_token.filter(|token| !token.is_empty()) {
+        for header_value in headers.values_mut() {
+            if header_value.contains(token) {
+                *header_value = header_value.replace(token, REDACTED_VALUE);
+            }
+        }
+    }
+
+    let mut sanitized_body = body;
+    if let Some(token) = admin_token.filter(|token| !token.is_empty()) {
+        if sanitized_body.contains(token) {
+            sanitized_body = sanitized_body.replace(token, REDACTED_VALUE);
+        }
+    }
+
+    if let Ok(mut payload) = serde_json::from_str::<Value>(&sanitized_body) {
+        redact_admin_token_fields(&mut payload);
+        if let Ok(serialized) = serde_json::to_string(&payload) {
+            sanitized_body = serialized;
+        }
+    }
+
+    (headers, sanitized_body)
+}
+
+fn redact_admin_token_fields(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for (key, nested) in map {
+                if key.eq_ignore_ascii_case("admin_token") {
+                    *nested = Value::String(REDACTED_VALUE.to_string());
+                    continue;
+                }
+                redact_admin_token_fields(nested);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                redact_admin_token_fields(item);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::is_admin_token_rotation_path;
+    use std::collections::BTreeMap;
+
+    use serde_json::json;
+
+    use super::{REDACTED_VALUE, is_admin_token_rotation_path, sanitize_core_response};
 
     #[test]
     fn admin_token_rotate_path_is_blocked() {
@@ -223,5 +284,57 @@ mod tests {
         assert!(!is_admin_token_rotation_path("/api/tokens/p-1/rotate"));
         assert!(!is_admin_token_rotation_path("/api/system/status"));
         assert!(!is_admin_token_rotation_path("/health"));
+    }
+
+    #[test]
+    fn sanitize_response_redacts_admin_token_field_and_literal() {
+        let mut headers = BTreeMap::new();
+        headers.insert(
+            "x-debug".to_string(),
+            "token=desktop-admin-token".to_string(),
+        );
+
+        let body = json!({
+            "admin_token": "desktop-admin-token",
+            "nested": { "Admin_Token": "desktop-admin-token" },
+            "token": "export-token-should-remain"
+        })
+        .to_string();
+
+        let (sanitized_headers, sanitized_body) =
+            sanitize_core_response(headers, body, Some("desktop-admin-token"));
+
+        assert_eq!(
+            sanitized_headers.get("x-debug"),
+            Some(&format!("token={REDACTED_VALUE}"))
+        );
+
+        let payload: serde_json::Value =
+            serde_json::from_str(&sanitized_body).expect("响应必须仍为 JSON");
+        assert_eq!(payload["admin_token"], REDACTED_VALUE);
+        assert_eq!(payload["nested"]["Admin_Token"], REDACTED_VALUE);
+        assert_eq!(payload["token"], "export-token-should-remain");
+    }
+
+    #[test]
+    fn sanitize_response_redacts_admin_token_field_without_context_token() {
+        let headers = BTreeMap::new();
+        let body = r#"{"admin_token":"server-side-token","safe":"ok"}"#.to_string();
+        let (_headers, sanitized_body) = sanitize_core_response(headers, body, None);
+        let payload: serde_json::Value =
+            serde_json::from_str(&sanitized_body).expect("响应必须仍为 JSON");
+
+        assert_eq!(payload["admin_token"], REDACTED_VALUE);
+        assert_eq!(payload["safe"], "ok");
+    }
+
+    #[test]
+    fn sanitize_response_replaces_token_literal_in_plain_text_body() {
+        let headers = BTreeMap::new();
+        let body = "debug token: desktop-admin-token".to_string();
+        let (_headers, sanitized_body) =
+            sanitize_core_response(headers, body, Some("desktop-admin-token"));
+
+        assert_eq!(sanitized_body, format!("debug token: {REDACTED_VALUE}"));
     }
 }
