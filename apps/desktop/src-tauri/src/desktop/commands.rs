@@ -6,9 +6,13 @@ use super::window_lifecycle::close_main_window;
 
 #[tauri::command]
 pub(crate) async fn core_start(
+    app_handle: AppHandle,
     manager: State<'_, CoreManager>,
 ) -> Result<CoreStatusPayload, String> {
-    manager.start_core().await.map_err(|err| err.to_string())
+    manager
+        .start_core(&app_handle)
+        .await
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]

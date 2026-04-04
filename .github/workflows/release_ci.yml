@@ -229,6 +229,28 @@ jobs:
           targets: ${{ matrix.target }}
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+      - name: Build subforge-core sidecar
+        run: cargo build -p subforge-core --release --target ${{ matrix.target }}
+      - name: Prepare desktop sidecar payload
+        shell: pwsh
+        run: |
+          $target = "${{ matrix.target }}"
+          $sourceBinary = if ($target -like "*windows*") {
+            "target/$target/release/subforge-core.exe"
+          } else {
+            "target/$target/release/subforge-core"
+          }
+          if (-not (Test-Path -LiteralPath $sourceBinary)) {
+            throw "未找到 sidecar 源文件: $sourceBinary"
+          }
+          $destDir = "apps/desktop/src-tauri/binaries"
+          New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+          $destName = if ($target -like "*windows*") {
+            "subforge-core-$target.exe"
+          } else {
+            "subforge-core-$target"
+          }
+          Copy-Item -LiteralPath $sourceBinary -Destination (Join-Path $destDir $destName) -Force
       - name: Desktop Tauri build smoke (no bundle)
         run: pnpm -C apps/desktop tauri build --ci --no-bundle --target ${{ matrix.target }}
       - name: Upload desktop binary (Windows)
@@ -294,6 +316,28 @@ jobs:
           targets: ${{ matrix.target }}
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+      - name: Build subforge-core sidecar
+        run: cargo build -p subforge-core --release --target ${{ matrix.target }}
+      - name: Prepare desktop sidecar payload
+        shell: pwsh
+        run: |
+          $target = "${{ matrix.target }}"
+          $sourceBinary = if ($target -like "*windows*") {
+            "target/$target/release/subforge-core.exe"
+          } else {
+            "target/$target/release/subforge-core"
+          }
+          if (-not (Test-Path -LiteralPath $sourceBinary)) {
+            throw "未找到 sidecar 源文件: $sourceBinary"
+          }
+          $destDir = "apps/desktop/src-tauri/binaries"
+          New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+          $destName = if ($target -like "*windows*") {
+            "subforge-core-$target.exe"
+          } else {
+            "subforge-core-$target"
+          }
+          Copy-Item -LiteralPath $sourceBinary -Destination (Join-Path $destDir $destName) -Force
       - name: Build desktop bundle (Windows NSIS)
         if: runner.os == 'Windows'
         run: pnpm -C apps/desktop tauri build --ci --bundles nsis --target ${{ matrix.target }}
@@ -335,3 +379,84 @@ jobs:
           path: target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
           if-no-files-found: error
           retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}
+
+  desktop-install-smoke-windows:
+    name: desktop-install-smoke-windows
+    runs-on: windows-latest
+    needs:
+      - desktop-bundle
+    steps:
+      - name: Download NSIS bundle artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: subforge-desktop-bundle-windows-latest-x86_64-pc-windows-msvc-nsis
+          path: dist
+      - name: Install and verify desktop bundle auto-starts core
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path dist -Filter *.exe -File | Select-Object -First 1
+          if (-not $installer) {
+            throw "未找到 NSIS 安装包产物"
+          }
+
+          $installDir = "C:\subforge-install-smoke"
+          Get-Process -Name "subforge-desktop-tauri", "subforge-core", "subforge_core" -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          if (Test-Path -LiteralPath $installDir) {
+            Remove-Item -LiteralPath $installDir -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $installDir | Out-Null
+
+          & $installer.FullName /S /D=$installDir
+          if ($LASTEXITCODE -ne 0) {
+            throw "静默安装失败，退出码：$LASTEXITCODE"
+          }
+
+          $desktopExe = $null
+          $findDesktopDeadline = (Get-Date).AddSeconds(20)
+          while ((Get-Date) -lt $findDesktopDeadline -and -not $desktopExe) {
+            $desktopExe = Get-ChildItem -Path $installDir -Filter *.exe -File |
+              Where-Object { $_.Name -notin @("subforge-core.exe", "uninstall.exe") } |
+              Select-Object -First 1
+            if (-not $desktopExe) {
+              Start-Sleep -Milliseconds 500
+            }
+          }
+          if (-not $desktopExe) {
+            throw "安装目录中未识别到 Desktop 可执行文件"
+          }
+
+          $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+          $startInfo.FileName = $desktopExe.FullName
+          $startInfo.UseShellExecute = $false
+          $startInfo.EnvironmentVariables["SUBFORGE_DESKTOP_PRELOAD_CORE"] = "1"
+          $desktopProcess = [System.Diagnostics.Process]::Start($startInfo)
+          $desktopProcessName = [System.IO.Path]::GetFileNameWithoutExtension($desktopExe.Name)
+          $deadline = (Get-Date).AddSeconds(45)
+          $healthy = $false
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $health = Invoke-RestMethod -Uri "http://127.0.0.1:18118/health" -TimeoutSec 3
+              if ($health.status -eq "ok") {
+                $healthy = $true
+                break
+              }
+            } catch {
+              Start-Sleep -Milliseconds 800
+            }
+          }
+
+          if (-not $healthy) {
+            throw "安装包启动后未检测到 Core /health 就绪"
+          }
+
+          Stop-Process -Name "subforge-core", "subforge_core" -ErrorAction SilentlyContinue
+          if ($desktopProcess -and -not $desktopProcess.HasExited) {
+            Stop-Process -Id $desktopProcess.Id -Force -ErrorAction SilentlyContinue
+          }
+          Stop-Process -Name $desktopProcessName -ErrorAction SilentlyContinue
+
+          $uninstaller = Join-Path $installDir "uninstall.exe"
+          if (Test-Path -LiteralPath $uninstaller) {
+            & $uninstaller /S
+          }

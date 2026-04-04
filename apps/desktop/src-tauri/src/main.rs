@@ -13,6 +13,11 @@ fn main() {
         .manage(manager)
         .setup(|app| {
             setup_tray(app.handle())?;
+            if should_preload_core_from_env() {
+                let manager = app.state::<CoreManager>();
+                tauri::async_runtime::block_on(manager.start_core(app.handle()))
+                    .map_err(|err| anyhow::anyhow!("预拉起 Core 失败: {err}"))?;
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -38,4 +43,12 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("运行 SubForge Desktop 失败");
+}
+
+fn should_preload_core_from_env() -> bool {
+    let raw = std::env::var("SUBFORGE_DESKTOP_PRELOAD_CORE").unwrap_or_default();
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes"
+    )
 }

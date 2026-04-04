@@ -14,13 +14,60 @@ use super::types::{
     SETTING_KEY_GUI_CLOSE_BEHAVIOR, SETTING_KEY_TRAY_MINIMIZE,
 };
 
-pub(super) fn resolve_workspace_root() -> Result<PathBuf> {
+pub(super) fn resolve_workspace_root() -> Option<PathBuf> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
         .join("..");
-    root.canonicalize()
-        .with_context(|| format!("定位 workspace 根目录失败: {}", root.display()))
+    let canonicalized = root.canonicalize().ok()?;
+    if !canonicalized.join("Cargo.toml").is_file() {
+        return None;
+    }
+    Some(canonicalized)
+}
+
+pub(super) fn resolve_core_data_dir(workspace_root: Option<&Path>) -> Result<PathBuf> {
+    if let Ok(from_env) = std::env::var("SUBFORGE_DESKTOP_DATA_DIR") {
+        let env_path = PathBuf::from(from_env.trim());
+        if !env_path.as_os_str().is_empty() {
+            return Ok(env_path);
+        }
+    }
+
+    if let Some(root) = workspace_root {
+        return Ok(root.join(".subforge-desktop"));
+    }
+
+    #[cfg(windows)]
+    {
+        let app_data = std::env::var("APPDATA").context("未找到 APPDATA 环境变量")?;
+        return Ok(PathBuf::from(app_data).join("SubForge"));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").context("未找到 HOME 环境变量")?;
+        return Ok(PathBuf::from(home).join("Library/Application Support/SubForge"));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Ok(xdg_data_home) = std::env::var("XDG_DATA_HOME")
+            && !xdg_data_home.trim().is_empty()
+        {
+            return Ok(PathBuf::from(xdg_data_home).join("subforge"));
+        }
+
+        let home = std::env::var("HOME").context("未找到 HOME 环境变量")?;
+        return Ok(PathBuf::from(home).join(".local/share/subforge"));
+    }
+
+    #[allow(unreachable_code)]
+    Err(anyhow!("无法确定 Desktop Core 数据目录"))
 }
 
 pub(super) fn read_bootstrap_line(stdout: std::process::ChildStdout) -> Result<CoreBootstrapLine> {

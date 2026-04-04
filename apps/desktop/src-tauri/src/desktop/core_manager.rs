@@ -1,29 +1,31 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use serde_json::Value;
+use tauri::{AppHandle, Manager};
 
 use super::helpers::{
-    abort_events_task, parse_gui_close_behavior, read_bootstrap_line, resolve_workspace_root,
-    spawn_log_reader, terminate_child,
+    abort_events_task, parse_gui_close_behavior, read_bootstrap_line, resolve_core_data_dir,
+    resolve_workspace_root, spawn_log_reader, terminate_child,
 };
 use super::types::{CoreState, CoreStatusPayload, GuiCloseBehavior};
 
 pub(crate) struct CoreManager {
-    pub(super) workspace_root: std::path::PathBuf,
-    pub(super) core_data_dir: std::path::PathBuf,
+    pub(super) workspace_root: Option<PathBuf>,
+    pub(super) core_data_dir: PathBuf,
     pub(super) state: Mutex<CoreState>,
     pub(super) client: reqwest::Client,
 }
 
 impl CoreManager {
     pub(crate) fn new() -> Result<Self> {
-        let workspace_root = resolve_workspace_root()?;
-        let core_data_dir = workspace_root.join(".subforge-desktop");
+        let workspace_root = resolve_workspace_root();
+        let core_data_dir = resolve_core_data_dir(workspace_root.as_deref())?;
         fs::create_dir_all(&core_data_dir).with_context(|| {
             format!(
                 "创建 Desktop Core 数据目录失败: {}",
@@ -39,7 +41,7 @@ impl CoreManager {
         })
     }
 
-    pub(crate) async fn start_core(&self) -> Result<CoreStatusPayload> {
+    pub(crate) async fn start_core(&self, app_handle: &AppHandle) -> Result<CoreStatusPayload> {
         let already_running = {
             let mut state = self.lock_state()?;
             self.reap_child_if_exited(&mut state)?;
@@ -50,14 +52,10 @@ impl CoreManager {
             return self.compose_status_payload().await;
         }
 
-        let mut command = Command::new("cargo");
+        let mut command = self
+            .build_core_launch_command(app_handle)
+            .context("构建 Core 启动命令失败")?;
         command
-            .current_dir(&self.workspace_root)
-            .arg("run")
-            .arg("-p")
-            .arg("subforge-core")
-            .arg("--")
-            .arg("run")
             .arg("--host")
             .arg(super::types::DEFAULT_CORE_HOST)
             .arg("--port")
@@ -264,5 +262,79 @@ impl CoreManager {
             ));
         }
         Ok(())
+    }
+
+    fn build_core_launch_command(&self, app_handle: &AppHandle) -> Result<Command> {
+        if let Some(sidecar_path) = self.resolve_sidecar_path(app_handle) {
+            let mut command = Command::new(&sidecar_path);
+            command.arg("run");
+            return Ok(command);
+        }
+
+        if let Some(workspace_root) = self.workspace_root.as_ref() {
+            let mut command = Command::new("cargo");
+            command
+                .current_dir(workspace_root)
+                .arg("run")
+                .arg("-p")
+                .arg("subforge-core")
+                .arg("--")
+                .arg("run");
+            return Ok(command);
+        }
+
+        Err(anyhow!(
+            "未找到可用的 subforge-core（既无 sidecar，也无可用 workspace）"
+        ))
+    }
+
+    fn resolve_sidecar_path(&self, app_handle: &AppHandle) -> Option<PathBuf> {
+        if let Ok(explicit) = std::env::var("SUBFORGE_CORE_BINARY") {
+            let path = PathBuf::from(explicit.trim());
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+
+        let mut candidate_dirs = Vec::new();
+        if let Ok(current_exe) = std::env::current_exe()
+            && let Some(parent) = current_exe.parent()
+        {
+            candidate_dirs.push(parent.to_path_buf());
+
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(resources_dir) = parent.parent().map(|path| path.join("Resources")) {
+                    candidate_dirs.push(resources_dir);
+                }
+            }
+        }
+        if let Ok(resource_dir) = app_handle.path().resource_dir() {
+            candidate_dirs.push(resource_dir);
+        }
+
+        let mut candidate_file_names = Vec::new();
+        let target_triple = option_env!("TARGET").unwrap_or("unknown-target");
+        #[cfg(windows)]
+        {
+            candidate_file_names.push("subforge-core.exe".to_string());
+            candidate_file_names.push(format!("subforge-core-{target_triple}.exe"));
+        }
+        #[cfg(not(windows))]
+        {
+            candidate_file_names.push("subforge-core".to_string());
+            candidate_file_names.push(format!("subforge-core-{target_triple}"));
+        }
+
+        for dir in candidate_dirs {
+            for file_name in &candidate_file_names {
+                let candidate = dir.join(file_name);
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+
+        None
     }
 }
