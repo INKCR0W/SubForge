@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { Skeleton } from "../../components/skeleton";
+import { formatTimestamp } from "../../lib/ui";
 import {
   fetchRefreshLogs,
   fetchSystemStatus,
@@ -18,7 +19,7 @@ function StatusCard({
   hint: string;
 }) {
   return (
-    <article className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/50 p-4">
+    <article className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-bg)]/65 p-4">
       <p className="text-xs uppercase tracking-wide text-[var(--muted-text)]">{title}</p>
       <p className="mt-2 text-xl font-semibold text-[var(--app-text)]">{value}</p>
       <p className="mt-1 text-xs text-[var(--muted-text)]">{hint}</p>
@@ -98,14 +99,16 @@ export default function DashboardPage() {
   };
 
   return (
-    <section className="space-y-5">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-2xl font-semibold">Dashboard</h2>
+    <section className="ui-page">
+      <header className="ui-page-header">
+        <div>
+          <h2 className="ui-page-title">Dashboard</h2>
+          <p className="ui-page-desc">核心状态、刷新指标、事件与错误统一浏览。</p>
+        </div>
         <div className="flex items-center gap-2">
-          <p className="text-sm text-[var(--muted-text)]">Core 连接状态、运行指标与事件概览</p>
           <button
             type="button"
-            className="rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-xs font-semibold text-[var(--accent-strong)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            className="ui-btn ui-btn-primary ui-focus"
             disabled={phase !== "running" || refreshAllMutation.isPending}
             onClick={handleRefreshAll}
           >
@@ -146,16 +149,16 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <article className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/45 p-4">
-        <h3 className="text-sm font-semibold text-[var(--app-text)]">连接概览</h3>
+      <article className="ui-card">
+        <h3 className="ui-card-title">连接概览</h3>
         <p className="mt-3 text-sm text-[var(--app-text)]">
           事件流：{eventStreamActive ? "已连接" : "未连接"} | 心跳：{formatTimestamp(heartbeatAt)} |
           最近事件：{lastEvent?.event ?? "暂无"}
         </p>
       </article>
 
-      <article className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/45 p-4">
-        <h3 className="text-sm font-semibold text-[var(--app-text)]">最近事件（SSE）</h3>
+      <article className="ui-card">
+        <h3 className="ui-card-title">最近事件（SSE）</h3>
         {recentEvents.length > 0 ? (
           <ul className="mt-3 space-y-2 text-sm">
             {recentEvents.map((event) => (
@@ -185,8 +188,8 @@ export default function DashboardPage() {
         )}
       </article>
 
-      <article className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/45 p-4">
-        <h3 className="text-sm font-semibold text-[var(--app-text)]">最近刷新</h3>
+      <article className="ui-card">
+        <h3 className="ui-card-title">最近刷新</h3>
         {recentLogsQuery.isLoading ? (
           <div className="mt-3 space-y-2">
             <Skeleton className="h-16" />
@@ -216,8 +219,8 @@ export default function DashboardPage() {
         )}
       </article>
 
-      <article className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/45 p-4">
-        <h3 className="text-sm font-semibold text-[var(--app-text)]">最近错误</h3>
+      <article className="ui-card">
+        <h3 className="ui-card-title">最近错误</h3>
         {recentErrorLogsQuery.isLoading ? (
           <div className="mt-3 space-y-2">
             <Skeleton className="h-16" />
@@ -245,17 +248,6 @@ export default function DashboardPage() {
       </article>
     </section>
   );
-}
-
-function formatTimestamp(value: string | null | undefined): string {
-  if (!value) {
-    return "暂无";
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString("zh-CN", { hour12: false });
 }
 
 function isErrorEvent(eventName: string): boolean {

@@ -191,27 +191,27 @@ export default function SettingsPage() {
   };
 
   return (
-    <section className="space-y-5">
+    <section className="ui-page">
       <header>
-        <h2 className="text-2xl font-semibold">Settings</h2>
-        <p className="mt-1 text-sm text-[var(--muted-text)]">
+        <h2 className="ui-page-title">Settings</h2>
+        <p className="ui-page-desc">
           配置主题、空闲自动关闭与窗口关闭行为。
         </p>
       </header>
 
-      <article className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/55 p-4">
-        <h3 className="text-sm font-semibold text-[var(--app-text)]">外观主题</h3>
-        <p className="mt-1 text-xs text-[var(--muted-text)]">
+      <article className="ui-card">
+        <h3 className="ui-card-title">外观主题</h3>
+        <p className="ui-card-desc">
           通过 `/api/system/settings` 持久化 `theme`，重启后保持一致。
         </p>
         <div className="mt-4 flex gap-2">
           <button
             type="button"
             onClick={() => applyTheme("dark")}
-            className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
+            className={`ui-btn ui-focus ${
               theme === "dark"
-                ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
-                : "bg-[var(--panel-bg)] text-[var(--muted-text)] hover:bg-[var(--panel-muted)]"
+                ? "ui-btn-primary"
+                : "ui-btn-secondary"
             }`}
             disabled={updateThemeMutation.isPending}
           >
@@ -220,10 +220,10 @@ export default function SettingsPage() {
           <button
             type="button"
             onClick={() => applyTheme("light")}
-            className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
+            className={`ui-btn ui-focus ${
               theme === "light"
-                ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
-                : "bg-[var(--panel-bg)] text-[var(--muted-text)] hover:bg-[var(--panel-muted)]"
+                ? "ui-btn-primary"
+                : "ui-btn-secondary"
             }`}
             disabled={updateThemeMutation.isPending}
           >
@@ -232,20 +232,16 @@ export default function SettingsPage() {
         </div>
       </article>
 
-      <article className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/55 p-4">
-        <h3 className="text-sm font-semibold text-[var(--app-text)]">系统集成</h3>
-        <p className="mt-1 text-xs text-[var(--muted-text)]">
+      <article className="ui-card">
+        <h3 className="ui-card-title">系统集成</h3>
+        <p className="ui-card-desc">
           配置 SubForge Desktop 是否随系统启动自动运行。
         </p>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <button
             type="button"
-            className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
-              autostartEnabled
-                ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
-                : "bg-[var(--panel-bg)] text-[var(--muted-text)] hover:bg-[var(--panel-muted)]"
-            }`}
+            className={`ui-btn ui-focus ${autostartEnabled ? "ui-btn-primary" : "ui-btn-secondary"}`}
             disabled={autostartMutation.isPending}
             onClick={() => autostartMutation.mutate(!autostartEnabled)}
           >
@@ -258,7 +254,7 @@ export default function SettingsPage() {
 
           <button
             type="button"
-            className="rounded-lg border border-[var(--panel-border)] px-3 py-2 text-sm text-[var(--app-text)] transition hover:bg-[var(--panel-bg)] disabled:opacity-60"
+            className="ui-btn ui-btn-secondary ui-focus"
             disabled={refreshAutostartMutation.isPending}
             onClick={() => refreshAutostartMutation.mutate()}
           >
@@ -271,9 +267,9 @@ export default function SettingsPage() {
         </div>
       </article>
 
-      <article className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/55 p-4">
-        <h3 className="text-sm font-semibold text-[var(--app-text)]">GUI 行为</h3>
-        <p className="mt-1 text-xs text-[var(--muted-text)]">
+      <article className="ui-card">
+        <h3 className="ui-card-title">GUI 行为</h3>
+        <p className="ui-card-desc">
           设置空闲自动关闭与窗口关闭行为，均通过 `/api/system/settings` 持久化。
         </p>
 
@@ -287,7 +283,7 @@ export default function SettingsPage() {
               step={1}
               value={idleMinutesInput}
               onChange={(event) => setIdleMinutesInput(event.target.value)}
-              className="w-full max-w-xs rounded-md border border-[var(--panel-border)] bg-[var(--panel-bg)] px-3 py-2 text-sm text-[var(--app-text)] outline-none focus:border-[var(--accent-strong)]"
+              className="ui-input ui-focus w-full max-w-xs"
             />
           </label>
           {idleMinutesValidationMessage ? (
@@ -333,7 +329,7 @@ export default function SettingsPage() {
               parsedIdleMinutes === null ||
               !isLifecycleDirty
             }
-            className="rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-sm font-medium text-[var(--accent-strong)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+            className="ui-btn ui-btn-primary ui-focus"
           >
             保存 GUI 行为设置
           </button>

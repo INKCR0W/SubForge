@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Skeleton } from "../../components/skeleton";
 import { fetchRefreshLogs, fetchSources } from "../../lib/api";
+import { formatTimestamp, statusToneClass } from "../../lib/ui";
 import { useCoreUiStore } from "../../stores/core-ui-store";
 import type { RefreshLog } from "../../types/core";
 
@@ -80,22 +81,22 @@ export default function RunsPage() {
   }, [expandedId, logs]);
 
   return (
-    <section className="space-y-5">
-      <header className="flex flex-wrap items-start justify-between gap-3">
+    <section className="ui-page">
+      <header className="ui-page-header">
         <div>
-          <h2 className="text-2xl font-semibold">Runs</h2>
-          <p className="mt-1 text-sm text-[var(--muted-text)]">
+          <h2 className="ui-page-title">Runs</h2>
+          <p className="ui-page-desc">
             按来源/状态筛选刷新记录，时间按最新优先排序并支持分页浏览。
           </p>
         </div>
       </header>
 
-      <article className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/45 p-4">
+      <article className="ui-card">
         <div className="grid gap-3 md:grid-cols-3">
           <label className="text-xs text-[var(--muted-text)]">
             状态筛选
             <select
-              className="mt-1 w-full rounded-md border border-[var(--panel-border)] bg-[var(--panel-bg)] px-3 py-2 text-sm text-[var(--app-text)]"
+              className="ui-select mt-1"
               value={statusFilter}
               onChange={(event) =>
                 setStatusFilter(event.currentTarget.value as typeof statusFilter)
@@ -111,7 +112,7 @@ export default function RunsPage() {
           <label className="text-xs text-[var(--muted-text)]">
             来源筛选
             <select
-              className="mt-1 w-full rounded-md border border-[var(--panel-border)] bg-[var(--panel-bg)] px-3 py-2 text-sm text-[var(--app-text)]"
+              className="ui-select mt-1"
               value={sourceFilter}
               onChange={(event) => setSourceFilter(event.currentTarget.value)}
             >
@@ -133,7 +134,7 @@ export default function RunsPage() {
         </div>
       </article>
 
-      <article className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/45 p-4">
+      <article className="ui-card">
         {logsQuery.isLoading ? (
           <div className="space-y-2">
             <Skeleton className="h-16" />
@@ -158,14 +159,14 @@ export default function RunsPage() {
         )}
       </article>
 
-      <footer className="flex items-center justify-between rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/45 px-4 py-3 text-sm">
+      <footer className="flex items-center justify-between rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/55 px-4 py-3 text-sm">
         <span className="text-[var(--muted-text)]">
           第 {page} / {totalPages} 页（每页 {PAGE_SIZE} 条）
         </span>
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className="rounded-md border border-[var(--panel-border)] px-3 py-1 text-xs text-[var(--app-text)] transition hover:bg-[var(--panel-bg)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="ui-btn ui-btn-secondary ui-focus"
             disabled={!hasPreviousPage}
             onClick={() => setPage((value) => Math.max(1, value - 1))}
           >
@@ -173,7 +174,7 @@ export default function RunsPage() {
           </button>
           <button
             type="button"
-            className="rounded-md border border-[var(--panel-border)] px-3 py-1 text-xs text-[var(--app-text)] transition hover:bg-[var(--panel-bg)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="ui-btn ui-btn-secondary ui-focus"
             disabled={!hasNextPage}
             onClick={() => setPage((value) => value + 1)}
           >
@@ -197,12 +198,6 @@ function RunItem({
   const durationText = formatDuration(log.startedAt, log.finishedAt);
   const hasScriptLogs = log.scriptLogs.length > 0;
   const hasDetails = hasRunDetails(log);
-  const statusClass =
-    log.status === "success"
-      ? "bg-emerald-500/20 text-emerald-300"
-      : log.status === "failed"
-        ? "bg-rose-500/20 text-rose-300"
-        : "bg-amber-500/20 text-amber-300";
 
   return (
     <article className="rounded-lg border border-[var(--panel-border)] bg-[var(--panel-bg)]/55 px-3 py-3 text-sm">
@@ -218,11 +213,11 @@ function RunItem({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <span className={`rounded-full px-2 py-1 text-xs ${statusClass}`}>{log.status}</span>
+          <span className={`ui-badge ${statusToneClass(log.status)}`}>{log.status}</span>
           {hasDetails && (
             <button
               type="button"
-              className="rounded-md border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--app-text)] transition hover:bg-[var(--panel-bg)]"
+              className="ui-btn ui-btn-secondary ui-focus"
               onClick={onToggle}
             >
               {expanded ? "收起详情" : "查看详情"}
@@ -275,17 +270,6 @@ function RunItem({
 
 function hasRunDetails(log: RefreshLog): boolean {
   return log.status === "failed" || log.scriptLogs.length > 0;
-}
-
-function formatTimestamp(value: string | null | undefined): string {
-  if (!value) {
-    return "-";
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString("zh-CN", { hour12: false });
 }
 
 function formatDuration(

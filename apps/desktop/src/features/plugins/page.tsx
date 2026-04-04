@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { Skeleton } from "../../components/skeleton";
+import { formatTimestamp as formatTimestampValue, statusToneClass } from "../../lib/ui";
 import {
   deletePlugin,
   fetchPlugins,
@@ -130,17 +131,17 @@ export default function PluginsPage() {
   };
 
   return (
-    <section className="space-y-5">
-      <header className="flex flex-wrap items-start justify-between gap-3">
+    <section className="ui-page">
+      <header className="ui-page-header">
         <div>
-          <h2 className="text-2xl font-semibold">Plugins</h2>
-          <p className="mt-1 text-sm text-[var(--muted-text)]">
+          <h2 className="ui-page-title">Plugins</h2>
+          <p className="ui-page-desc">
             插件列表、ZIP 导入、启用/禁用与删除管理。
           </p>
         </div>
         <button
           type="button"
-          className="rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-xs font-semibold text-[var(--accent-strong)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          className="ui-btn ui-btn-primary ui-focus"
           disabled={isUploading}
           onClick={() => fileInputRef.current?.click()}
         >
@@ -197,7 +198,7 @@ export default function PluginsPage() {
           <Skeleton className="h-32" />
         </div>
       ) : plugins.length === 0 ? (
-        <article className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/45 p-4 text-sm text-[var(--muted-text)]">
+        <article className="ui-card text-sm text-[var(--muted-text)]">
           暂无插件。请先导入插件包。
         </article>
       ) : (
@@ -220,18 +221,12 @@ export default function PluginsPage() {
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span
-                      className={`rounded-full px-2 py-1 text-xs ${
-                        plugin.status === "enabled"
-                          ? "bg-emerald-500/20 text-emerald-300"
-                          : "bg-amber-500/20 text-amber-300"
-                      }`}
-                    >
+                    <span className={`ui-badge ${statusToneClass(plugin.status)}`}>
                       {plugin.status}
                     </span>
                     <button
                       type="button"
-                      className="rounded-md border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--app-text)] transition hover:bg-[var(--panel-bg)] disabled:cursor-not-allowed disabled:opacity-60"
+                      className="ui-btn ui-btn-secondary ui-focus"
                       onClick={() =>
                         setExpandedPluginId(expanded ? null : plugin.id)
                       }
@@ -240,7 +235,7 @@ export default function PluginsPage() {
                     </button>
                     <button
                       type="button"
-                      className="rounded-md border border-[var(--panel-border)] px-2 py-1 text-xs text-[var(--app-text)] transition hover:bg-[var(--panel-bg)] disabled:cursor-not-allowed disabled:opacity-60"
+                      className="ui-btn ui-btn-secondary ui-focus"
                       disabled={busy}
                       onClick={() => handleToggle(plugin)}
                     >
@@ -252,7 +247,7 @@ export default function PluginsPage() {
                     </button>
                     <button
                       type="button"
-                      className="rounded-md border border-rose-400/35 px-2 py-1 text-xs text-rose-300 transition hover:bg-rose-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="ui-btn ui-btn-danger ui-focus"
                       disabled={busy}
                       onClick={() => handleDelete(plugin)}
                     >
@@ -296,9 +291,5 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 }
 
 function formatTimestamp(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString("zh-CN", { hour12: false });
+  return formatTimestampValue(value, value);
 }

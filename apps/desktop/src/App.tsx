@@ -40,14 +40,14 @@ export default function App() {
         </div>
       )}
 
-      <div className="mx-auto flex min-h-screen max-w-[1520px] gap-4 p-4 md:gap-6 md:p-6">
-        <aside className="w-full rounded-2xl border border-[var(--panel-border)] bg-[var(--panel-bg)] p-4 shadow-[0_24px_70px_rgba(5,12,24,0.45)] backdrop-blur md:sticky md:top-6 md:h-[calc(100vh-3rem)] md:w-[276px] md:overflow-y-auto">
-          <div className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/70 px-4 py-3">
-            <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted-text)]">
+      <div className="mx-auto flex min-h-screen max-w-[1540px] gap-4 p-4 md:gap-6 md:p-6">
+        <aside className="w-full rounded-2xl border border-[var(--panel-border)] bg-[var(--panel-bg)] p-4 shadow-[0_24px_70px_rgba(5,12,24,0.45)] backdrop-blur md:sticky md:top-6 md:h-[calc(100vh-3rem)] md:w-[282px] md:overflow-y-auto">
+          <div className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/72 px-4 py-3">
+            <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted-text)]">
               SubForge
             </p>
             <h1 className="mt-1 text-2xl font-semibold text-[var(--app-text)]">Control Deck</h1>
-            <p className="mt-1 text-xs text-[var(--muted-text)]">Core + Desktop 管理面板</p>
+            <p className="mt-1 text-xs text-[var(--muted-text)]">Core + Desktop 管理中枢</p>
           </div>
 
           <nav className="mt-4 flex gap-2 overflow-x-auto pb-1 md:block md:space-y-2">
@@ -76,13 +76,20 @@ export default function App() {
                     {item.tag}
                   </span>
                   <span className="space-y-0.5">
-                    <span className="block text-sm font-medium">{item.label}</span>
+                    <span className="block text-sm font-medium tracking-wide">{item.label}</span>
                     <span className="block text-[11px] text-[var(--muted-text)]">{item.hint}</span>
                   </span>
                 </Link>
               );
             })}
           </nav>
+
+          <div className="mt-4 rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/35 px-3 py-3 text-xs">
+            <p className="text-[var(--muted-text)]">连接状态</p>
+            <p className="mt-1 text-sm font-medium text-[var(--app-text)]">{indicator.label}</p>
+            <p className="mt-2 text-[var(--muted-text)]">心跳</p>
+            <p className="mt-1 text-sm text-[var(--app-text)]">{heartbeatAt ?? "未建立"}</p>
+          </div>
         </aside>
 
         <section className="flex min-w-0 flex-1 flex-col gap-4">
