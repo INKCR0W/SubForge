@@ -1,0 +1,10 @@
+.git
+.github
+target
+node_modules
+docs/.vitepress/dist
+docs-internal
+screenshots
+.tmp-gui-smoke
+.subforge
+.subforge-desktop
