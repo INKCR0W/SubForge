@@ -61,7 +61,7 @@ jobs:
         if: steps.channel.outputs.mode != 'skip'
         uses: actions/download-artifact@v4
         with:
-          github-token: ${{ secrets.SUBFORGE_RELEASE_TOKEN != '' && secrets.SUBFORGE_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
           pattern: subforge-*
           path: release-assets
@@ -69,12 +69,30 @@ jobs:
       - name: Publish pre-release from main
         if: steps.channel.outputs.mode == 'prerelease'
         env:
-          GH_TOKEN: ${{ secrets.SUBFORGE_RELEASE_TOKEN != '' && secrets.SUBFORGE_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ steps.channel.outputs.sha }}
         run: |
           set -euo pipefail
           gh --version
-          mapfile -t files < <(find release-assets -type f | sort)
+          rm -rf release-assets-upload
+          mkdir -p release-assets-upload
+          while IFS= read -r -d '' source_file; do
+            artifact_dir="$(basename "$(dirname "$source_file")")"
+            source_name="$(basename "$source_file")"
+            extension=""
+            if [[ "$source_name" == *.* ]]; then
+              extension=".${source_name##*.}"
+            fi
+            target_name="${artifact_dir}${extension}"
+            target_path="release-assets-upload/${target_name}"
+            if [[ -e "${target_path}" ]]; then
+              target_name="${artifact_dir}--${source_name}"
+              target_path="release-assets-upload/${target_name}"
+            fi
+            cp "$source_file" "$target_path"
+          done < <(find release-assets -type f -print0)
+
+          mapfile -t files < <(find release-assets-upload -maxdepth 1 -type f | sort)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No release assets found."
             exit 1
@@ -105,12 +123,30 @@ jobs:
       - name: Publish release from v* tag
         if: steps.channel.outputs.mode == 'release'
         env:
-          GH_TOKEN: ${{ secrets.SUBFORGE_RELEASE_TOKEN != '' && secrets.SUBFORGE_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.channel.outputs.tag }}
         run: |
           set -euo pipefail
           gh --version
-          mapfile -t files < <(find release-assets -type f | sort)
+          rm -rf release-assets-upload
+          mkdir -p release-assets-upload
+          while IFS= read -r -d '' source_file; do
+            artifact_dir="$(basename "$(dirname "$source_file")")"
+            source_name="$(basename "$source_file")"
+            extension=""
+            if [[ "$source_name" == *.* ]]; then
+              extension=".${source_name##*.}"
+            fi
+            target_name="${artifact_dir}${extension}"
+            target_path="release-assets-upload/${target_name}"
+            if [[ -e "${target_path}" ]]; then
+              target_name="${artifact_dir}--${source_name}"
+              target_path="release-assets-upload/${target_name}"
+            fi
+            cp "$source_file" "$target_path"
+          done < <(find release-assets -type f -print0)
+
+          mapfile -t files < <(find release-assets-upload -maxdepth 1 -type f | sort)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No release assets found."
             exit 1
