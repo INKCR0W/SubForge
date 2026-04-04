@@ -1,7 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
-import { Skeleton } from "../../components/skeleton";
-import { formatTimestamp as formatTimestampValue, statusToneClass } from "../../lib/ui";
 import {
   deletePlugin,
   fetchPlugins,
@@ -10,6 +8,8 @@ import {
 } from "../../lib/api";
 import { useCoreUiStore } from "../../stores/core-ui-store";
 import type { PluginRecord } from "../../types/core";
+import { PluginImportCard } from "./plugin-import-card";
+import { PluginListCard } from "./plugin-list-card";
 
 export default function PluginsPage() {
   const queryClient = useQueryClient();
@@ -157,139 +157,26 @@ export default function PluginsPage() {
         onChange={(event) => handleImportFile(event.currentTarget.files?.[0] ?? null)}
       />
 
-      <div
-        className={`rounded-xl border border-dashed p-4 transition ${
-          dragging
-            ? "border-[var(--accent-strong)] bg-[var(--accent-soft)]/25"
-            : "border-[var(--panel-border)] bg-[var(--panel-muted)]/35"
-        }`}
-        onDragEnter={(event) => {
-          event.preventDefault();
-          setDragging(true);
-        }}
-        onDragOver={(event) => {
-          event.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={(event) => {
-          event.preventDefault();
-          setDragging(false);
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          setDragging(false);
-          handleImportFile(event.dataTransfer.files?.[0] ?? null);
-        }}
-      >
-        <p className="text-sm text-[var(--app-text)]">
-          拖拽 `.zip` 插件包到此处，或使用“导入插件 ZIP”按钮选择文件。
-        </p>
-        <p className="mt-1 text-xs text-[var(--muted-text)]">非法插件包会显示错误详情。</p>
-        {uploadError && (
-          <p className="mt-2 rounded-md border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
-            {uploadError}
-          </p>
-        )}
-      </div>
+      <PluginImportCard
+        dragging={dragging}
+        isUploading={isUploading}
+        uploadError={uploadError}
+        onRequestSelectFile={() => fileInputRef.current?.click()}
+        onDraggingChange={setDragging}
+        onImportFile={handleImportFile}
+      />
 
-      {pluginsQuery.isLoading ? (
-        <div className="space-y-3">
-          <Skeleton className="h-32" />
-          <Skeleton className="h-32" />
-        </div>
-      ) : plugins.length === 0 ? (
-        <article className="ui-card text-sm text-[var(--muted-text)]">
-          暂无插件。请先导入插件包。
-        </article>
-      ) : (
-        <div className="space-y-3">
-          {plugins.map((plugin) => {
-            const expanded = expandedPluginId === plugin.id;
-            const busy = activePluginId === plugin.id;
-            return (
-              <article
-                key={plugin.id}
-                className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/45 p-4"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-base font-semibold text-[var(--app-text)]">{plugin.name}</h3>
-                    <p className="mt-1 text-xs text-[var(--muted-text)]">{plugin.plugin_id}</p>
-                    <p className="mt-1 text-xs text-[var(--muted-text)]">
-                      版本 {plugin.version} · spec {plugin.spec_version} · 类型{" "}
-                      {plugin.plugin_type}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={`ui-badge ${statusToneClass(plugin.status)}`}>
-                      {plugin.status}
-                    </span>
-                    <button
-                      type="button"
-                      className="ui-btn ui-btn-secondary ui-focus"
-                      onClick={() =>
-                        setExpandedPluginId(expanded ? null : plugin.id)
-                      }
-                    >
-                      {expanded ? "收起详情" : "查看详情"}
-                    </button>
-                    <button
-                      type="button"
-                      className="ui-btn ui-btn-secondary ui-focus"
-                      disabled={busy}
-                      onClick={() => handleToggle(plugin)}
-                    >
-                      {busy
-                        ? "处理中..."
-                        : plugin.status === "enabled"
-                          ? "禁用"
-                          : "启用"}
-                    </button>
-                    <button
-                      type="button"
-                      className="ui-btn ui-btn-danger ui-focus"
-                      disabled={busy}
-                      onClick={() => handleDelete(plugin)}
-                    >
-                      删除
-                    </button>
-                  </div>
-                </div>
-
-                {expanded && (
-                  <dl className="mt-3 grid gap-2 rounded-lg border border-[var(--panel-border)] bg-[var(--panel-bg)]/55 p-3 text-xs md:grid-cols-2">
-                    <DetailRow label="插件记录 ID" value={plugin.id} />
-                    <DetailRow label="插件标识" value={plugin.plugin_id} />
-                    <DetailRow label="类型" value={plugin.plugin_type} />
-                    <DetailRow label="状态" value={plugin.status} />
-                    <DetailRow
-                      label="安装时间"
-                      value={formatTimestamp(plugin.installed_at)}
-                    />
-                    <DetailRow
-                      label="更新时间"
-                      value={formatTimestamp(plugin.updated_at)}
-                    />
-                  </dl>
-                )}
-              </article>
-            );
-          })}
-        </div>
-      )}
+      <PluginListCard
+        loading={pluginsQuery.isLoading}
+        plugins={plugins}
+        expandedPluginId={expandedPluginId}
+        activePluginId={activePluginId}
+        onToggleExpanded={(pluginId) =>
+          setExpandedPluginId((current) => (current === pluginId ? null : pluginId))
+        }
+        onToggleStatus={handleToggle}
+        onDelete={handleDelete}
+      />
     </section>
   );
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-[var(--muted-text)]">{label}</dt>
-      <dd className="mt-1 break-all text-[var(--app-text)]">{value}</dd>
-    </div>
-  );
-}
-
-function formatTimestamp(value: string): string {
-  return formatTimestampValue(value, value);
 }
