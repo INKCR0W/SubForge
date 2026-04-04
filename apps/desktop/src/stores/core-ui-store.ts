@@ -16,6 +16,7 @@ type CoreUiState = {
   eventHistory: CoreEventPayload[];
   lastRefreshAt: string | null;
   theme: "dark" | "light";
+  autostartEnabled: boolean;
   idleAutoCloseMinutes: number;
   windowCloseBehavior: WindowCloseBehavior;
   toasts: ToastMessage[];
@@ -27,6 +28,7 @@ type CoreUiState = {
   pushEvent: (event: CoreEventPayload) => void;
   setLastRefreshAt: (timestamp: string | null) => void;
   setTheme: (theme: "dark" | "light") => void;
+  setAutostartEnabled: (enabled: boolean) => void;
   setIdleAutoCloseMinutes: (minutes: number) => void;
   setWindowCloseBehavior: (behavior: WindowCloseBehavior) => void;
   addToast: (toast: Omit<ToastMessage, "id">) => string;
@@ -50,6 +52,7 @@ export const useCoreUiStore = create<CoreUiState>((set) => ({
   eventHistory: [],
   lastRefreshAt: null,
   theme: "dark",
+  autostartEnabled: false,
   idleAutoCloseMinutes: 30,
   windowCloseBehavior: "tray_minimize",
   toasts: [],
@@ -65,6 +68,7 @@ export const useCoreUiStore = create<CoreUiState>((set) => ({
     })),
   setLastRefreshAt: (lastRefreshAt) => set({ lastRefreshAt }),
   setTheme: (theme) => set({ theme }),
+  setAutostartEnabled: (autostartEnabled) => set({ autostartEnabled }),
   setIdleAutoCloseMinutes: (idleAutoCloseMinutes) => set({ idleAutoCloseMinutes }),
   setWindowCloseBehavior: (windowCloseBehavior) => set({ windowCloseBehavior }),
   addToast: (toast) => {

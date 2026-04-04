@@ -4,6 +4,8 @@ export {
   coreStart,
   coreStatus,
   coreStop,
+  desktopGetAutostart,
+  desktopSetAutostart,
   desktopAutoCloseGui,
 } from "./api/client";
 export { fetchRefreshLogs } from "./api/logs";

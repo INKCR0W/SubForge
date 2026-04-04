@@ -1,35 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { updateSystemSettings } from "../../lib/api";
+import {
+  desktopGetAutostart,
+  desktopSetAutostart,
+  updateSystemSettings,
+} from "../../lib/api";
 import { useCoreUiStore } from "../../stores/core-ui-store";
 import type { WindowCloseBehavior } from "../../types/core";
-
-const CLOSE_BEHAVIOR_OPTIONS: Array<{
-  value: WindowCloseBehavior;
-  label: string;
-  description: string;
-}> = [
-  {
-    value: "tray_minimize",
-    label: "最小化到托盘",
-    description: "点击窗口关闭按钮时仅隐藏窗口，GUI 进程保持运行。",
-  },
-  {
-    value: "close_gui",
-    label: "仅关闭 GUI",
-    description: "关闭管理界面进程，Core 守护进程继续运行。",
-  },
-  {
-    value: "close_gui_and_stop_core",
-    label: "关闭 GUI 并停止 Core",
-    description: "关闭管理界面时同时停止 Core 进程。",
-  },
-];
+import { CLOSE_BEHAVIOR_OPTIONS } from "./constants";
 
 export default function SettingsPage() {
   const theme = useCoreUiStore((state) => state.theme);
   const setTheme = useCoreUiStore((state) => state.setTheme);
   const idleAutoCloseMinutes = useCoreUiStore((state) => state.idleAutoCloseMinutes);
+  const autostartEnabled = useCoreUiStore((state) => state.autostartEnabled);
+  const setAutostartEnabled = useCoreUiStore((state) => state.setAutostartEnabled);
   const setIdleAutoCloseMinutes = useCoreUiStore(
     (state) => state.setIdleAutoCloseMinutes,
   );
@@ -69,6 +54,46 @@ export default function SettingsPage() {
       addToast({
         title: "主题保存失败",
         description: error instanceof Error ? error.message : "Core 设置接口调用失败。",
+        variant: "error",
+      });
+    },
+  });
+
+  const autostartMutation = useMutation({
+    mutationFn: (enabled: boolean) => desktopSetAutostart(enabled),
+    onSuccess: (enabled) => {
+      setAutostartEnabled(enabled);
+      addToast({
+        title: enabled ? "开机自启已启用" : "开机自启已关闭",
+        description: enabled
+          ? "下次系统启动后会自动启动 SubForge Desktop。"
+          : "系统启动时将不再自动启动 SubForge Desktop。",
+        variant: "default",
+      });
+    },
+    onError: (error) => {
+      addToast({
+        title: "开机自启设置失败",
+        description: error instanceof Error ? error.message : "调用系统开机自启接口失败。",
+        variant: "error",
+      });
+    },
+  });
+
+  const refreshAutostartMutation = useMutation({
+    mutationFn: desktopGetAutostart,
+    onSuccess: (enabled) => {
+      setAutostartEnabled(enabled);
+      addToast({
+        title: "开机自启状态已刷新",
+        description: enabled ? "当前为启用状态。" : "当前为关闭状态。",
+        variant: "default",
+      });
+    },
+    onError: (error) => {
+      addToast({
+        title: "开机自启状态读取失败",
+        description: error instanceof Error ? error.message : "读取失败，请稍后重试。",
         variant: "error",
       });
     },
@@ -204,6 +229,45 @@ export default function SettingsPage() {
           >
             浅色
           </button>
+        </div>
+      </article>
+
+      <article className="rounded-xl border border-[var(--panel-border)] bg-[var(--panel-muted)]/55 p-4">
+        <h3 className="text-sm font-semibold text-[var(--app-text)]">系统集成</h3>
+        <p className="mt-1 text-xs text-[var(--muted-text)]">
+          配置 SubForge Desktop 是否随系统启动自动运行。
+        </p>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
+              autostartEnabled
+                ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                : "bg-[var(--panel-bg)] text-[var(--muted-text)] hover:bg-[var(--panel-muted)]"
+            }`}
+            disabled={autostartMutation.isPending}
+            onClick={() => autostartMutation.mutate(!autostartEnabled)}
+          >
+            {autostartMutation.isPending
+              ? "应用中..."
+              : autostartEnabled
+                ? "关闭开机自启"
+                : "启用开机自启"}
+          </button>
+
+          <button
+            type="button"
+            className="rounded-lg border border-[var(--panel-border)] px-3 py-2 text-sm text-[var(--app-text)] transition hover:bg-[var(--panel-bg)] disabled:opacity-60"
+            disabled={refreshAutostartMutation.isPending}
+            onClick={() => refreshAutostartMutation.mutate()}
+          >
+            {refreshAutostartMutation.isPending ? "刷新中..." : "刷新状态"}
+          </button>
+
+          <span className="text-xs text-[var(--muted-text)]">
+            当前：{autostartEnabled ? "已启用" : "未启用"}
+          </span>
         </div>
       </article>
 

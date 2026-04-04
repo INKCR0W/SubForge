@@ -21,6 +21,14 @@ export async function desktopAutoCloseGui(): Promise<void> {
   await invoke("desktop_auto_close_gui");
 }
 
+export async function desktopGetAutostart(): Promise<boolean> {
+  return invoke<boolean>("desktop_get_autostart");
+}
+
+export async function desktopSetAutostart(enabled: boolean): Promise<boolean> {
+  return invoke<boolean>("desktop_set_autostart", { enabled });
+}
+
 export async function coreApiCall(
   method: string,
   path: string,

@@ -2,27 +2,33 @@
 
 :root {
   font-family:
-    "Avenir Next", "PingFang SC", "Noto Sans SC", "Segoe UI", "Microsoft YaHei",
-    sans-serif;
-  --app-bg: #090f1a;
-  --app-text: #ebf3ff;
-  --muted-text: #a8b6cc;
-  --panel-bg: rgba(10, 20, 36, 0.72);
-  --panel-muted: rgba(25, 41, 64, 0.62);
-  --panel-border: rgba(133, 165, 214, 0.25);
-  --accent-soft: rgba(92, 214, 255, 0.22);
-  --accent-strong: #7de8ff;
+    "Avenir Next", "DIN Alternate", "PingFang SC", "Noto Sans SC", "Segoe UI",
+    "Microsoft YaHei", sans-serif;
+  --app-bg: #07101c;
+  --app-text: #eaf2ff;
+  --muted-text: #9aaec9;
+  --panel-bg: rgba(10, 22, 38, 0.74);
+  --panel-muted: rgba(18, 39, 63, 0.7);
+  --panel-border: rgba(119, 146, 188, 0.32);
+  --accent-soft: rgba(34, 199, 255, 0.2);
+  --accent-strong: #67dfff;
+  --accent-border: rgba(96, 214, 255, 0.55);
+  --accent-chip-bg: rgba(22, 65, 92, 0.62);
+  --warn-text: #ffc89c;
 }
 
 :root[data-theme="light"] {
-  --app-bg: #eef4fa;
-  --app-text: #10243a;
-  --muted-text: #4f6178;
-  --panel-bg: rgba(255, 255, 255, 0.8);
-  --panel-muted: rgba(211, 224, 239, 0.6);
-  --panel-border: rgba(105, 129, 158, 0.28);
-  --accent-soft: rgba(0, 148, 198, 0.16);
-  --accent-strong: #045f89;
+  --app-bg: #edf3fb;
+  --app-text: #0f2238;
+  --muted-text: #4a5f79;
+  --panel-bg: rgba(255, 255, 255, 0.86);
+  --panel-muted: rgba(216, 228, 243, 0.68);
+  --panel-border: rgba(93, 124, 160, 0.31);
+  --accent-soft: rgba(2, 150, 206, 0.16);
+  --accent-strong: #065a80;
+  --accent-border: rgba(0, 133, 186, 0.45);
+  --accent-chip-bg: rgba(198, 231, 247, 0.88);
+  --warn-text: #8a4d13;
 }
 
 * {
@@ -34,11 +40,29 @@ body {
   min-height: 100vh;
   color: var(--app-text);
   background:
-    radial-gradient(circle at 6% 10%, rgba(0, 178, 255, 0.22) 0%, transparent 40%),
-    radial-gradient(circle at 90% 12%, rgba(255, 198, 81, 0.16) 0%, transparent 44%),
+    radial-gradient(circle at 10% 7%, rgba(0, 183, 255, 0.21) 0%, transparent 40%),
+    radial-gradient(circle at 84% 9%, rgba(255, 186, 94, 0.18) 0%, transparent 42%),
+    radial-gradient(circle at 50% 100%, rgba(33, 80, 124, 0.35) 0%, transparent 56%),
     var(--app-bg);
+  background-attachment: fixed;
 }
 
 #root {
   min-height: 100vh;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(134, 166, 205, 0.45);
+  background-clip: padding-box;
 }

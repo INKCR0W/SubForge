@@ -2,14 +2,20 @@ mod desktop;
 
 use desktop::{
     CoreManager, apply_main_window_close_behavior, core_api_call, core_events_start,
-    core_import_plugin_zip, core_start, core_status, core_stop, desktop_auto_close_gui, setup_tray,
+    core_import_plugin_zip, core_start, core_status, core_stop, desktop_auto_close_gui,
+    desktop_get_autostart, desktop_set_autostart, setup_tray,
 };
 use tauri::Manager;
+use tauri_plugin_autostart::MacosLauncher;
 
 fn main() {
     let manager = CoreManager::new().expect("初始化 CoreManager 失败");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(manager)
         .setup(|app| {
             setup_tray(app.handle())?;
@@ -39,7 +45,9 @@ fn main() {
             core_api_call,
             core_import_plugin_zip,
             core_events_start,
-            desktop_auto_close_gui
+            desktop_auto_close_gui,
+            desktop_get_autostart,
+            desktop_set_autostart
         ])
         .run(tauri::generate_context!())
         .expect("运行 SubForge Desktop 失败");

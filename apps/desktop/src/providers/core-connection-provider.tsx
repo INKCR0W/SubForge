@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { type PropsWithChildren, useEffect, useRef } from "react";
 import {
   coreEventsStart,
+  desktopGetAutostart,
   coreStart,
   desktopAutoCloseGui,
   coreStatus,
@@ -26,6 +27,7 @@ export function CoreConnectionProvider({ children }: PropsWithChildren) {
   const setLastRefreshAt = useCoreUiStore((state) => state.setLastRefreshAt);
   const setTheme = useCoreUiStore((state) => state.setTheme);
   const idleAutoCloseMinutes = useCoreUiStore((state) => state.idleAutoCloseMinutes);
+  const setAutostartEnabled = useCoreUiStore((state) => state.setAutostartEnabled);
   const setIdleAutoCloseMinutes = useCoreUiStore(
     (state) => state.setIdleAutoCloseMinutes,
   );
@@ -58,6 +60,21 @@ export function CoreConnectionProvider({ children }: PropsWithChildren) {
 
         setStatus(status);
         previousRunning.current = status.running;
+
+        try {
+          const autostartEnabled = await desktopGetAutostart();
+          if (!cancelled) {
+            setAutostartEnabled(autostartEnabled);
+          }
+        } catch {
+          if (!cancelled) {
+            addToast({
+              title: "开机自启状态读取失败",
+              description: "将使用本地默认值，可在设置页重试。",
+              variant: "warning",
+            });
+          }
+        }
 
         if (status.running) {
           setPhase("running");
@@ -118,6 +135,7 @@ export function CoreConnectionProvider({ children }: PropsWithChildren) {
     };
   }, [
     addToast,
+    setAutostartEnabled,
     setError,
     setIdleAutoCloseMinutes,
     setPhase,
