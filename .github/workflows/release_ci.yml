@@ -394,12 +394,23 @@ jobs:
       - name: Install and verify desktop bundle auto-starts core
         shell: pwsh
         run: |
+          $logDir = Join-Path $env:RUNNER_TEMP "desktop-install-smoke-logs"
+          New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+          $summaryPath = Join-Path $logDir "smoke-summary.log"
+          $snapshotPath = Join-Path $logDir "failure-snapshot.log"
+          $transcriptPath = Join-Path $logDir "smoke-transcript.log"
+          $installDir = "C:\subforge-install-smoke"
+          $desktopProcess = $null
+          $desktopProcessName = $null
+
+          Start-Transcript -Path $transcriptPath -Force | Out-Null
+          try {
           $installer = Get-ChildItem -Path dist -Filter *.exe -File | Select-Object -First 1
           if (-not $installer) {
             throw "未找到 NSIS 安装包产物"
           }
 
-          $installDir = "C:\subforge-install-smoke"
+          Add-Content -Path $summaryPath -Value "installer=$($installer.FullName)"
           Get-Process -Name "subforge-desktop-tauri", "subforge-core", "subforge_core" -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
           if (Test-Path -LiteralPath $installDir) {
@@ -419,6 +430,7 @@ jobs:
               Start-Sleep -Seconds 2
             }
           }
+          Add-Content -Path $summaryPath -Value "install_exit_code=$installExitCode"
           if ($installExitCode -ne 0) {
             throw "静默安装失败，退出码：$installExitCode"
           }
@@ -436,6 +448,7 @@ jobs:
           if (-not $desktopExe) {
             throw "安装目录中未识别到 Desktop 可执行文件"
           }
+          Add-Content -Path $summaryPath -Value "desktop_exe=$($desktopExe.FullName)"
 
           $startInfo = New-Object System.Diagnostics.ProcessStartInfo
           $startInfo.FileName = $desktopExe.FullName
@@ -460,17 +473,62 @@ jobs:
           if (-not $healthy) {
             throw "安装包启动后未检测到 Core /health 就绪"
           }
-
-          Stop-Process -Name "subforge-core", "subforge_core" -ErrorAction SilentlyContinue
-          if ($desktopProcess -and -not $desktopProcess.HasExited) {
-            Stop-Process -Id $desktopProcess.Id -Force -ErrorAction SilentlyContinue
-          }
-          Stop-Process -Name $desktopProcessName -ErrorAction SilentlyContinue
+          Add-Content -Path $summaryPath -Value "health_check=ok"
 
           $uninstaller = Join-Path $installDir "uninstall.exe"
           if (Test-Path -LiteralPath $uninstaller) {
             $uninstallProc = Start-Process -FilePath $uninstaller -ArgumentList @("/S") -Wait -PassThru -NoNewWindow
+            Add-Content -Path $summaryPath -Value "uninstall_exit_code=$($uninstallProc.ExitCode)"
             if ($uninstallProc.ExitCode -ne 0) {
               throw "静默卸载失败，退出码：$($uninstallProc.ExitCode)"
             }
+          } else {
+            Add-Content -Path $summaryPath -Value "uninstall_skip=uninstaller_missing"
           }
+          } catch {
+            Add-Content -Path $summaryPath -Value "failure=$($_.Exception.Message)"
+            Set-Content -Path $snapshotPath -Value "=== Process Snapshot ==="
+            Get-Process -Name "subforge-desktop-tauri", "subforge-core", "subforge_core" -ErrorAction SilentlyContinue |
+              Select-Object Name, Id, CPU, StartTime |
+              Format-Table -AutoSize |
+              Out-String |
+              Add-Content -Path $snapshotPath
+            Add-Content -Path $snapshotPath -Value "=== Port 18118 Listener Snapshot ==="
+            Get-NetTCPConnection -LocalPort 18118 -State Listen -ErrorAction SilentlyContinue |
+              Select-Object LocalAddress, LocalPort, OwningProcess |
+              Format-Table -AutoSize |
+              Out-String |
+              Add-Content -Path $snapshotPath
+            Add-Content -Path $snapshotPath -Value "=== Install Directory Snapshot ==="
+            if (Test-Path -LiteralPath $installDir) {
+              Get-ChildItem -Path $installDir -Recurse -ErrorAction SilentlyContinue |
+                Select-Object FullName, Length |
+                Format-Table -AutoSize |
+                Out-String |
+                Add-Content -Path $snapshotPath
+            } else {
+              Add-Content -Path $snapshotPath -Value "install_dir_missing"
+            }
+            throw
+          } finally {
+            Stop-Process -Name "subforge-core", "subforge_core" -ErrorAction SilentlyContinue
+            if ($desktopProcess -and -not $desktopProcess.HasExited) {
+              Stop-Process -Id $desktopProcess.Id -Force -ErrorAction SilentlyContinue
+            }
+            if ($desktopProcessName) {
+              Stop-Process -Name $desktopProcessName -ErrorAction SilentlyContinue
+            }
+            try {
+              Stop-Transcript | Out-Null
+            } catch {
+              # ignore transcript shutdown errors
+            }
+          }
+      - name: Upload desktop install smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-install-smoke-logs-windows-latest
+          path: ${{ runner.temp }}/desktop-install-smoke-logs
+          if-no-files-found: warn
+          retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}
