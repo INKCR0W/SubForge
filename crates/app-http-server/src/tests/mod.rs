@@ -112,6 +112,44 @@ pub(super) fn build_builtin_plugin_zip_bytes() -> Vec<u8> {
     cursor.into_inner()
 }
 
+pub(super) fn build_builtin_plugin_zip_bytes_with_network_profile(
+    network_profile: &str,
+) -> Vec<u8> {
+    let plugin_dir =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/builtins/static");
+    let plugin_json = fs::read_to_string(plugin_dir.join("plugin.json"))
+        .expect("读取内置插件 plugin.json 失败")
+        .replace(
+            r#""network_profile": "standard""#,
+            &format!(r#""network_profile": "{network_profile}""#),
+        );
+
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    {
+        let mut writer = zip::ZipWriter::new(&mut cursor);
+        let options = SimpleFileOptions::default();
+
+        writer
+            .start_file("plugin.json", options)
+            .expect("写入 zip 条目失败");
+        writer
+            .write_all(plugin_json.as_bytes())
+            .expect("写入 plugin.json 失败");
+
+        writer
+            .start_file("schema.json", options)
+            .expect("写入 zip 条目失败");
+        let schema_bytes =
+            fs::read(plugin_dir.join("schema.json")).expect("读取内置插件 schema.json 失败");
+        writer
+            .write_all(&schema_bytes)
+            .expect("写入 schema.json 失败");
+
+        writer.finish().expect("完成 zip 构建失败");
+    }
+    cursor.into_inner()
+}
+
 pub(super) fn build_builtin_plugin_zip_bytes_with_root_dir(root_dir: &str) -> Vec<u8> {
     let plugin_dir =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/builtins/static");

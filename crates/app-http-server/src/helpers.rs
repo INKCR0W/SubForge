@@ -319,12 +319,18 @@ pub(crate) fn core_error_to_response(error: CoreError) -> (StatusCode, Json<Erro
             "读取插件文件失败，请确认插件包结构完整（plugin.json/schema.json/脚本文件）",
             false,
         ),
-        CoreError::Transport(_) => error_response(
-            StatusCode::BAD_GATEWAY,
-            &code,
-            "Upstream request failed",
-            true,
-        ),
+        CoreError::Transport(error) => match error.code() {
+            "E_CONFIG_INVALID" => {
+                error_response(StatusCode::BAD_REQUEST, &code, error.to_string(), false)
+            }
+            "E_INTERNAL" => internal_error_response(),
+            _ => error_response(
+                StatusCode::BAD_GATEWAY,
+                &code,
+                "Upstream request failed",
+                true,
+            ),
+        },
         CoreError::Storage(_)
         | CoreError::Secret(_)
         | CoreError::Io(_)

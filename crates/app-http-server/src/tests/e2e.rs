@@ -733,6 +733,90 @@ async fn e2e_import_plugin_zip_with_backslash_path_separator() {
 }
 
 #[tokio::test]
+async fn e2e_refresh_source_with_unsupported_network_profile_returns_bad_request() {
+    let state = build_test_state();
+    let app = build_router(state.clone());
+
+    let boundary = "----subforge-e2e-unsupported-profile-boundary";
+    let plugin_zip = build_builtin_plugin_zip_bytes_with_network_profile("browser_firefox");
+    let import_body = build_multipart_plugin_body(boundary, &plugin_zip, "builtin-static.zip");
+    let import_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/plugins/import")
+                .header(HOST, "127.0.0.1:18118")
+                .header("authorization", "Bearer test-admin-token")
+                .header(
+                    CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(import_body))
+                .expect("构建导入插件请求失败"),
+        )
+        .await
+        .expect("导入插件请求执行失败");
+    assert_eq!(import_response.status(), StatusCode::CREATED);
+
+    let source_response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::POST,
+            "/api/sources",
+            &json!({
+                "plugin_id": "subforge.builtin.static",
+                "name": "Unsupported Profile Source",
+                "config": {
+                    "url": "https://example.com/subscription"
+                }
+            }),
+        ))
+        .await
+        .expect("创建来源请求执行失败");
+    assert_eq!(source_response.status(), StatusCode::CREATED);
+    let source_payload = read_json(source_response).await;
+    let source_id = source_payload
+        .pointer("/source/source/id")
+        .and_then(Value::as_str)
+        .expect("来源响应缺少 source.id")
+        .to_string();
+
+    let refresh_response = app
+        .clone()
+        .oneshot(admin_request(
+            Method::POST,
+            &format!("/api/sources/{source_id}/refresh"),
+            Body::empty(),
+        ))
+        .await
+        .expect("刷新来源请求执行失败");
+    assert_eq!(refresh_response.status(), StatusCode::BAD_REQUEST);
+    let refresh_payload = read_json(refresh_response).await;
+    assert_eq!(
+        refresh_payload.get("code").and_then(Value::as_str),
+        Some("E_CONFIG_INVALID")
+    );
+    assert!(
+        refresh_payload
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|message| message.contains("network_profile"))
+    );
+
+    let refresh_repository = RefreshJobRepository::new(state.database.as_ref());
+    let refresh_jobs = refresh_repository
+        .list_by_source(&source_id)
+        .expect("读取 refresh_jobs 失败");
+    assert_eq!(refresh_jobs.len(), 1);
+    assert_eq!(refresh_jobs[0].status, "failed");
+    assert_eq!(
+        refresh_jobs[0].error_code.as_deref(),
+        Some("E_CONFIG_INVALID")
+    );
+}
+
+#[tokio::test]
 async fn e2e_script_source_refresh_via_management_api() {
     let state = build_test_state();
     let mut event_receiver = state.event_sender.subscribe();

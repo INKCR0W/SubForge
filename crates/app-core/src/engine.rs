@@ -76,29 +76,31 @@ impl<'a> Engine<'a> {
             error_message: None,
         })?;
 
-        let result = match &loaded_plugin.manifest.plugin_type {
-            PluginType::Static => {
-                let url = source
-                    .config
-                    .get("url")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| CoreError::ConfigInvalid("来源配置缺少 url 字段".to_string()))?
-                    .to_string();
-                let user_agent = source
-                    .config
-                    .get("user_agent")
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
+        let result: CoreResult<(Vec<_>, Option<String>)> = match &loaded_plugin.manifest.plugin_type
+        {
+            PluginType::Static => match source.config.get("url").and_then(Value::as_str) {
+                Some(url) => {
+                    let user_agent = source
+                        .config
+                        .get("user_agent")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
 
-                let fetcher = StaticFetcher::new_with_network_profile(
-                    self.db,
-                    &loaded_plugin.manifest.network_profile,
-                )?;
-                fetcher
-                    .fetch_and_cache_with_metadata(source_id, &url, user_agent.as_deref())
-                    .await
-                    .map(|value| (value.nodes, value.subscription_userinfo))
-            }
+                    match StaticFetcher::new_with_network_profile(
+                        self.db,
+                        &loaded_plugin.manifest.network_profile,
+                    ) {
+                        Ok(fetcher) => fetcher
+                            .fetch_and_cache_with_metadata(source_id, url, user_agent.as_deref())
+                            .await
+                            .map(|value| (value.nodes, value.subscription_userinfo)),
+                        Err(error) => Err(error),
+                    }
+                }
+                None => Err(CoreError::ConfigInvalid(
+                    "来源配置缺少 url 字段".to_string(),
+                )),
+            },
             PluginType::Script => {
                 let script_executor = ScriptExecutor::new(self.db, Arc::clone(&self.secret_store));
                 script_executor
@@ -110,9 +112,21 @@ impl<'a> Engine<'a> {
         match result {
             Ok((nodes, subscription_userinfo)) => {
                 let node_count_usize = nodes.len();
-                let node_count = i64::try_from(node_count_usize)
-                    .map_err(|_| CoreError::ConfigInvalid("节点数量超过 i64 上限".to_string()))?;
-                let finished_at = now_rfc3339()?;
+                let node_count = match i64::try_from(node_count_usize) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let error = CoreError::ConfigInvalid("节点数量超过 i64 上限".to_string());
+                        let finished_at = finished_at_timestamp();
+                        let _ = refresh_repository.mark_failed(
+                            &refresh_job_id,
+                            &finished_at,
+                            error.code(),
+                            &error.to_string(),
+                        );
+                        return Err(error);
+                    }
+                };
+                let finished_at = finished_at_timestamp();
                 refresh_repository.mark_success(&refresh_job_id, &finished_at, node_count)?;
                 Ok(SourceRefreshResult {
                     refresh_job_id,
@@ -122,7 +136,7 @@ impl<'a> Engine<'a> {
                 })
             }
             Err(error) => {
-                let finished_at = now_rfc3339()?;
+                let finished_at = finished_at_timestamp();
                 let error_code = error.code().to_string();
                 let error_message = error.to_string();
                 let _ = refresh_repository.mark_failed(
@@ -188,4 +202,12 @@ impl<'a> Engine<'a> {
             grace_expires_at,
         })
     }
+}
+
+fn finished_at_timestamp() -> String {
+    now_rfc3339().unwrap_or_else(|_| {
+        OffsetDateTime::now_utc()
+            .format(&Rfc3339)
+            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+    })
 }
