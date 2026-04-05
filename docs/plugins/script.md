@@ -10,32 +10,71 @@ my-plugin/
   schema.json
   scripts/
     fetch.lua
-    login.lua
-    refresh.lua
+    login.lua (可选)
+    refresh.lua (可选)
 ```
 
-最小要求：`type = "script"` 且包含 `fetch.lua`。
+最小可导入要求：
 
-## plugin.json 关键字段
+- `plugin.json` 必填：`plugin_id`、`spec_version`、`name`、`version`、`type`、`config_schema`
+- `type` 必须为 `"script"`
+- `entrypoints.fetch` 必填且非空
+- `schema.json` 必须可解析且满足受限 JSON Schema 子集
+
+说明：`fetch.lua` 文件存在性在脚本执行阶段校验（导入阶段只校验 `entrypoints.fetch` 字段本身）。
+
+常见导入报错对应关系：
+
+- `plugin.json 解析失败：missing field 'name'`：缺少必填字段（如 `name`、`version`、`config_schema`）
+- `script 插件必须提供 entrypoints.fetch`：未声明 `entrypoints.fetch` 或值为空
+- `schema 顶层字段不支持：...`：`schema.json` 使用了当前不支持的关键字（如 `oneOf`）
+
+## plugin.json 示例（可直接作为起点）
 
 ```json
 {
   "plugin_id": "vendor.example.dynamic-sub",
   "spec_version": "1.0",
+  "name": "Dynamic Subscription",
+  "version": "1.0.0",
   "type": "script",
+  "config_schema": "schema.json",
   "entrypoints": {
     "login": "scripts/login.lua",
     "refresh": "scripts/refresh.lua",
     "fetch": "scripts/fetch.lua"
   },
+  "capabilities": ["http", "cookie", "json", "html", "base64", "secret", "log", "time"],
   "secret_fields": ["password"],
   "network_profile": "browser_chrome"
 }
 ```
 
-- `spec_version`：当前支持 `1.x`（主版本号为 `1`）。
-- `secret_fields`：必须是 schema 中定义过的字段。
-- `network_profile`：`standard / browser_chrome / browser_firefox / webview_assisted`。
+## manifest 字段规则（与当前代码一致）
+
+必填字段：
+
+- `plugin_id`：不能为空，且不能包含 `..`、`/`、`\`
+- `spec_version`：仅支持 `1.x`
+- `name`：不能为空
+- `version`：不能为空
+- `type`：`"script"`
+- `config_schema`：不能为空，且路径必须位于插件目录内
+
+脚本类型额外要求：
+
+- `entrypoints.fetch` 必填且非空
+- `entrypoints.login` / `entrypoints.refresh` 可选
+
+可选字段与默认值：
+
+- `secret_fields`：默认 `[]`，每个字段必须出现在 `schema.properties`
+- `entrypoints`：默认空对象
+- `capabilities`：默认 `[]`，若填写仅允许：
+  `http / cookie / json / html / base64 / secret / log / time`
+- `network_profile`：默认 `standard`，可选：
+  `standard / browser_chrome / browser_firefox / webview_assisted`
+- `anti_bot_level`：默认 `low`
 
 ## 入口函数契约
 
@@ -50,6 +89,29 @@ my-plugin/
 推荐约定：
 - 失败统一 `ok = false` 并返回结构化 `error`。
 - 非敏感上下文写入 `state`，敏感值写入 `secret` API。
+
+## schema.json 约束（导入时校验）
+
+顶层仅支持这些 key：
+
+- `$schema`
+- `type`
+- `required`
+- `properties`
+- `additionalProperties`
+
+`properties.<field>` 仅支持：
+
+- `type`、`title`、`description`、`default`、`enum`
+- `format`、`minLength`、`maxLength`、`minimum`、`maximum`、`pattern`
+- `x-ui`（仅支持 `widget`、`placeholder`、`help`、`group`、`order`）
+
+额外限制：
+
+- `schema.type` 必须为 `object`
+- `schema.properties` 不能为空
+- 字段类型仅支持 `string / number / integer / boolean`
+- `required` 中的字段必须在 `properties` 中定义
 
 ## Runtime API 白名单
 

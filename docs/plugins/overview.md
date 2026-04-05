@@ -1,4 +1,4 @@
-﻿# 插件体系
+# 插件体系
 
 SubForge 插件遵循统一 `plugin.json + schema.json` 规范。
 
@@ -7,9 +7,24 @@ SubForge 插件遵循统一 `plugin.json + schema.json` 规范。
 - `static`：直接拉取配置 URL
 - `script`：通过登录/刷新/抓取脚本获取配置数据
 
-## 最小目录结构
+## 通用必填字段（plugin.json）
+
+- `plugin_id`
+- `spec_version`（当前仅支持 `1.x`）
+- `name`
+- `version`
+- `type`
+- `config_schema`
+
+## 目录结构
 
 ```text
+static 插件：
+my-plugin/
+  plugin.json
+  schema.json
+
+script 插件：
 my-plugin/
   plugin.json
   schema.json
@@ -18,6 +33,14 @@ my-plugin/
     login.lua (可选)
     refresh.lua (可选)
 ```
+
+script 插件还要求 `entrypoints.fetch` 非空。
+
+## 导入打包注意事项
+
+- 插件 zip 中必须且只能有一个 `plugin.json`
+- `plugin.json` 可以在 zip 根目录，也可以在某个子目录中
+- 若 zip 中存在多个 `plugin.json`，导入会被拒绝
 
 更多字段说明见下级文档。
 
