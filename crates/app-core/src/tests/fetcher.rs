@@ -5,6 +5,22 @@ use brotli::CompressorWriter;
 use flate2::Compression;
 use flate2::write::GzEncoder;
 
+#[derive(Clone)]
+struct CountingParser {
+    parse_calls: Arc<AtomicUsize>,
+}
+
+impl SubscriptionParser for CountingParser {
+    fn parse(
+        &self,
+        _source_id: &str,
+        _payload: &str,
+    ) -> crate::CoreResult<Vec<app_common::ProxyNode>> {
+        self.parse_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(Vec::new())
+    }
+}
+
 #[tokio::test]
 async fn static_fetcher_fetches_parses_and_persists_node_cache() {
     let db = Database::open_in_memory().expect("内存数据库初始化失败");
@@ -304,6 +320,79 @@ proxy-groups:
             .expect("读取模板设置失败")
             .is_none(),
         "非 Clash YAML 内容应清理模板缓存"
+    );
+}
+
+#[test]
+fn static_fetcher_skips_uri_parser_when_payload_is_routing_template() {
+    let db = Database::open_in_memory().expect("内存数据库初始化失败");
+    let source_repository = SourceRepository::new(&db);
+    source_repository
+        .insert(&sample_source(
+            "source-fetch-parser-short-circuit",
+            "subforge.builtin.static",
+        ))
+        .expect("写入来源实例失败");
+
+    let parse_calls = Arc::new(AtomicUsize::new(0));
+    let fetcher = StaticFetcher::with_parser(
+        &db,
+        CountingParser {
+            parse_calls: parse_calls.clone(),
+        },
+    )
+    .expect("初始化 StaticFetcher 失败");
+
+    let payload = r#"
+proxy-groups:
+  - name: Proxy
+    type: select
+    proxies:
+      - DIRECT
+"#;
+    let nodes = fetcher
+        .parse_and_cache_content("source-fetch-parser-short-circuit", payload)
+        .expect("模板内容解析应成功");
+
+    assert!(nodes.is_empty(), "模板内容应短路为零节点");
+    assert_eq!(
+        parse_calls.load(Ordering::SeqCst),
+        0,
+        "模板内容命中时不应进入 URI 解析器"
+    );
+}
+
+#[test]
+fn static_fetcher_uses_uri_parser_when_payload_is_not_routing_template() {
+    let db = Database::open_in_memory().expect("内存数据库初始化失败");
+    let source_repository = SourceRepository::new(&db);
+    source_repository
+        .insert(&sample_source(
+            "source-fetch-parser-regular",
+            "subforge.builtin.static",
+        ))
+        .expect("写入来源实例失败");
+
+    let parse_calls = Arc::new(AtomicUsize::new(0));
+    let fetcher = StaticFetcher::with_parser(
+        &db,
+        CountingParser {
+            parse_calls: parse_calls.clone(),
+        },
+    )
+    .expect("初始化 StaticFetcher 失败");
+
+    fetcher
+        .parse_and_cache_content(
+            "source-fetch-parser-regular",
+            "ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@example.com:443#node-a",
+        )
+        .expect("URI 内容解析应成功");
+
+    assert_eq!(
+        parse_calls.load(Ordering::SeqCst),
+        1,
+        "非模板内容必须进入 URI 解析器"
     );
 }
 
