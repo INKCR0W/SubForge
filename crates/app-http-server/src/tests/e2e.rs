@@ -842,6 +842,47 @@ async fn e2e_profile_clash_template_source_applies_template_groups() {
     assert!(auto_group_block.contains("- SG-VMESS"));
     assert!(!auto_group_block.contains("- US-Trojan"));
 
+    // 删除模板来源后，Profile 应回退为默认分组导出（Select/Auto/Region）。
+    let delete_template_source_response = app
+        .clone()
+        .oneshot(admin_request(
+            Method::DELETE,
+            &format!("/api/sources/{template_source_id}"),
+            Body::empty(),
+        ))
+        .await
+        .expect("删除模板来源失败");
+    assert_eq!(delete_template_source_response.status(), StatusCode::OK);
+
+    let clash_fallback_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!(
+                    "/api/profiles/{profile_id}/clash?token={export_token}"
+                ))
+                .header(HOST, "127.0.0.1:18118")
+                .body(Body::empty())
+                .expect("构建回退 clash 请求失败"),
+        )
+        .await
+        .expect("获取回退 clash 订阅失败");
+    assert_eq!(clash_fallback_response.status(), StatusCode::OK);
+    let clash_fallback_bytes = to_bytes(clash_fallback_response.into_body(), 1024 * 1024)
+        .await
+        .expect("读取回退 clash 响应体失败");
+    let clash_fallback_text =
+        String::from_utf8(clash_fallback_bytes.to_vec()).expect("回退 clash 响应不是 UTF-8");
+    assert!(clash_fallback_text.contains("proxy-groups:"));
+    assert!(!clash_fallback_text.contains("\nrules:"));
+    assert!(clash_fallback_text.contains("- name: Select"));
+    assert!(clash_fallback_text.contains("- name: Auto"));
+    assert!(clash_fallback_text.contains("- name: HK"));
+    assert!(clash_fallback_text.contains("- name: SG"));
+    assert!(clash_fallback_text.contains("- name: US"));
+    assert!(!clash_fallback_text.contains("- name: Proxy"));
+
     template_server_task.abort();
     nodes_server_task.abort();
 }
