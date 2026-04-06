@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use app_common::{Profile, ProxyNode};
+use app_common::{ClashRoutingTemplate, Profile, ProxyNode};
+use regex::Regex;
 use serde::Serialize;
 
 use crate::shared::push_unique_proxy_name;
@@ -28,6 +29,16 @@ impl Default for ClashTransformer {
 
 impl Transformer for ClashTransformer {
     fn transform(&self, nodes: &[ProxyNode], _profile: &Profile) -> TransformResult<String> {
+        self.transform_with_template(nodes, None)
+    }
+}
+
+impl ClashTransformer {
+    pub fn transform_with_template(
+        &self,
+        nodes: &[ProxyNode],
+        routing_template: Option<&ClashRoutingTemplate>,
+    ) -> TransformResult<String> {
         let mut proxies = Vec::with_capacity(nodes.len());
         for node in nodes {
             proxies.push(proxy::build_clash_proxy(node)?);
@@ -35,13 +46,14 @@ impl Transformer for ClashTransformer {
 
         let config = ClashConfig {
             proxies,
-            proxy_groups: self.build_proxy_groups(nodes),
+            proxy_groups: match routing_template {
+                Some(template) => self.build_proxy_groups_from_template(nodes, template),
+                None => self.build_proxy_groups(nodes),
+            },
         };
         Ok(serde_yaml::to_string(&config)?)
     }
-}
 
-impl ClashTransformer {
     fn build_proxy_groups(&self, nodes: &[ProxyNode]) -> Vec<ClashProxyGroup> {
         let node_names = nodes
             .iter()
@@ -90,6 +102,91 @@ impl ClashTransformer {
 
         groups
     }
+
+    fn build_proxy_groups_from_template(
+        &self,
+        nodes: &[ProxyNode],
+        routing_template: &ClashRoutingTemplate,
+    ) -> Vec<ClashProxyGroup> {
+        let aggregated_node_names = nodes
+            .iter()
+            .map(|node| node.name.clone())
+            .collect::<Vec<_>>();
+        let group_name_set = routing_template
+            .groups
+            .iter()
+            .map(|group| group.name.as_str())
+            .collect::<BTreeSet<_>>();
+
+        let mut groups = Vec::with_capacity(routing_template.groups.len());
+        let mut injected_any_nodes = false;
+        for template_group in &routing_template.groups {
+            let mut proxies = Vec::new();
+            let mut inserted_aggregated_nodes = false;
+            let mut has_plain_node_slot = false;
+            let candidate_nodes = filter_group_candidate_nodes(
+                &aggregated_node_names,
+                template_group.filter.as_deref(),
+                template_group.exclude_filter.as_deref(),
+            );
+
+            for item in &template_group.proxies {
+                if group_name_set.contains(item.as_str()) || is_builtin_policy(item) {
+                    push_unique_proxy_name(&mut proxies, item);
+                    continue;
+                }
+                has_plain_node_slot = true;
+                if !inserted_aggregated_nodes {
+                    for name in &candidate_nodes {
+                        push_unique_proxy_name(&mut proxies, name);
+                    }
+                    inserted_aggregated_nodes = true;
+                }
+            }
+
+            let should_inject_without_slot =
+                template_group.include_all || template_group.use_provider;
+            if !inserted_aggregated_nodes
+                && !candidate_nodes.is_empty()
+                && (has_plain_node_slot
+                    || template_group.proxies.is_empty()
+                    || should_inject_without_slot)
+            {
+                for name in &candidate_nodes {
+                    push_unique_proxy_name(&mut proxies, name);
+                }
+                inserted_aggregated_nodes = true;
+            }
+
+            if inserted_aggregated_nodes {
+                injected_any_nodes = true;
+            }
+
+            groups.push(ClashProxyGroup {
+                name: template_group.name.clone(),
+                group_type: template_group.group_type.clone(),
+                proxies,
+                url: template_group.url.clone(),
+                interval: template_group.interval,
+                tolerance: template_group.tolerance,
+            });
+        }
+
+        if !injected_any_nodes
+            && !aggregated_node_names.is_empty()
+            && let Some(first_group) = groups.first_mut()
+        {
+            for name in &aggregated_node_names {
+                push_unique_proxy_name(&mut first_group.proxies, name);
+            }
+        }
+
+        if groups.is_empty() {
+            self.build_proxy_groups(nodes)
+        } else {
+            groups
+        }
+    }
 }
 
 fn collect_region_groups(nodes: &[ProxyNode]) -> BTreeMap<String, Vec<String>> {
@@ -117,6 +214,37 @@ fn normalize_region_name(region: Option<&str>) -> Option<String> {
     } else {
         Some(value.to_ascii_uppercase())
     }
+}
+
+fn is_builtin_policy(name: &str) -> bool {
+    matches!(
+        name.trim().to_ascii_uppercase().as_str(),
+        "DIRECT" | "REJECT" | "REJECT-DROP" | "PASS" | "COMPATIBLE"
+    )
+}
+
+fn filter_group_candidate_nodes(
+    node_names: &[String],
+    include_filter: Option<&str>,
+    exclude_filter: Option<&str>,
+) -> Vec<String> {
+    node_names
+        .iter()
+        .filter(|name| matches_filter(name, include_filter, true))
+        .filter(|name| matches_filter(name, exclude_filter, false))
+        .cloned()
+        .collect()
+}
+
+fn matches_filter(value: &str, pattern: Option<&str>, include_mode: bool) -> bool {
+    let Some(pattern) = pattern.map(str::trim).filter(|item| !item.is_empty()) else {
+        return true;
+    };
+
+    let matched = Regex::new(pattern)
+        .map(|regex| regex.is_match(value))
+        .unwrap_or_else(|_| value.contains(pattern));
+    if include_mode { matched } else { !matched }
 }
 
 #[derive(Debug, Serialize)]

@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
-use app_common::{ProxyNode, ProxyProtocol, ProxyTransport, TlsConfig};
+use app_common::{
+    ClashRoutingTemplate, ClashRoutingTemplateGroup, ProxyNode, ProxyProtocol, ProxyTransport,
+    TlsConfig,
+};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde_json::{Value, json};
@@ -358,6 +361,247 @@ fn snapshot_tuic_share_link_base64() {
     );
 }
 
+#[test]
+fn clash_template_keeps_group_chain_and_replaces_nodes_with_aggregated_set() {
+    let transformer = ClashTransformer::default();
+    let nodes = vec![
+        build_node(
+            "HK-Aggregated",
+            ProxyProtocol::Ss,
+            ProxyTransport::Tcp,
+            Some("hk"),
+            vec![
+                ("cipher", Value::String("aes-128-gcm".to_string())),
+                ("password", Value::String("p@ss".to_string())),
+            ],
+        ),
+        build_node(
+            "SG-Aggregated",
+            ProxyProtocol::Trojan,
+            ProxyTransport::Tcp,
+            Some("sg"),
+            vec![("password", Value::String("trojan-pass".to_string()))],
+        ),
+    ];
+
+    let template = ClashRoutingTemplate {
+        groups: vec![
+            ClashRoutingTemplateGroup {
+                name: "Proxy".to_string(),
+                group_type: "select".to_string(),
+                proxies: vec![
+                    "Auto".to_string(),
+                    "DIRECT".to_string(),
+                    "旧节点".to_string(),
+                ],
+                url: None,
+                interval: None,
+                tolerance: None,
+                include_all: false,
+                use_provider: false,
+                filter: None,
+                exclude_filter: None,
+            },
+            ClashRoutingTemplateGroup {
+                name: "Auto".to_string(),
+                group_type: "url-test".to_string(),
+                proxies: vec!["旧节点1".to_string(), "旧节点2".to_string()],
+                url: Some("http://www.gstatic.com/generate_204".to_string()),
+                interval: Some(300),
+                tolerance: Some(50),
+                include_all: false,
+                use_provider: false,
+                filter: None,
+                exclude_filter: None,
+            },
+        ],
+        rules: Vec::new(),
+    };
+
+    let yaml = transformer
+        .transform_with_template(&nodes, Some(&template))
+        .expect("带模板转换 YAML 失败");
+    let value: Value = serde_yaml::from_str(&yaml).expect("YAML 解析失败");
+
+    let groups = value
+        .get("proxy-groups")
+        .and_then(Value::as_array)
+        .expect("应包含 proxy-groups");
+    assert_eq!(groups.len(), 2);
+
+    let proxy_group = groups
+        .iter()
+        .find(|group| group.get("name").and_then(Value::as_str) == Some("Proxy"))
+        .expect("应包含 Proxy 分组");
+    let proxy_group_proxies = proxy_group
+        .get("proxies")
+        .and_then(Value::as_array)
+        .expect("Proxy 分组缺少 proxies")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    assert!(proxy_group_proxies.contains(&"Auto"));
+    assert!(proxy_group_proxies.contains(&"DIRECT"));
+    assert!(proxy_group_proxies.contains(&"HK-Aggregated"));
+    assert!(proxy_group_proxies.contains(&"SG-Aggregated"));
+
+    let auto_group = groups
+        .iter()
+        .find(|group| group.get("name").and_then(Value::as_str) == Some("Auto"))
+        .expect("应包含 Auto 分组");
+    let auto_group_proxies = auto_group
+        .get("proxies")
+        .and_then(Value::as_array)
+        .expect("Auto 分组缺少 proxies")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    assert!(auto_group_proxies.contains(&"HK-Aggregated"));
+    assert!(auto_group_proxies.contains(&"SG-Aggregated"));
+}
+
+#[test]
+fn clash_template_keeps_pure_subgroup_reference_without_injecting_nodes() {
+    let transformer = ClashTransformer::default();
+    let nodes = vec![build_node(
+        "HK-Aggregated",
+        ProxyProtocol::Ss,
+        ProxyTransport::Tcp,
+        Some("hk"),
+        vec![
+            ("cipher", Value::String("aes-128-gcm".to_string())),
+            ("password", Value::String("p@ss".to_string())),
+        ],
+    )];
+
+    let template = ClashRoutingTemplate {
+        groups: vec![
+            ClashRoutingTemplateGroup {
+                name: "Proxy".to_string(),
+                group_type: "select".to_string(),
+                proxies: vec!["Auto".to_string(), "DIRECT".to_string()],
+                url: None,
+                interval: None,
+                tolerance: None,
+                include_all: false,
+                use_provider: false,
+                filter: None,
+                exclude_filter: None,
+            },
+            ClashRoutingTemplateGroup {
+                name: "Auto".to_string(),
+                group_type: "url-test".to_string(),
+                proxies: vec!["旧节点".to_string()],
+                url: Some("http://www.gstatic.com/generate_204".to_string()),
+                interval: Some(300),
+                tolerance: Some(50),
+                include_all: false,
+                use_provider: false,
+                filter: None,
+                exclude_filter: None,
+            },
+        ],
+        rules: Vec::new(),
+    };
+
+    let yaml = transformer
+        .transform_with_template(&nodes, Some(&template))
+        .expect("带模板转换 YAML 失败");
+    let value: Value = serde_yaml::from_str(&yaml).expect("YAML 解析失败");
+    let groups = value
+        .get("proxy-groups")
+        .and_then(Value::as_array)
+        .expect("应包含 proxy-groups");
+    let proxy_group = groups
+        .iter()
+        .find(|group| group.get("name").and_then(Value::as_str) == Some("Proxy"))
+        .expect("应包含 Proxy 分组");
+    let proxy_group_proxies = proxy_group
+        .get("proxies")
+        .and_then(Value::as_array)
+        .expect("Proxy 分组缺少 proxies")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    assert_eq!(proxy_group_proxies, vec!["Auto", "DIRECT"]);
+}
+
+#[test]
+fn clash_template_supports_provider_style_groups_with_filter() {
+    let transformer = ClashTransformer::default();
+    let nodes = vec![
+        build_node(
+            "HK-01",
+            ProxyProtocol::Ss,
+            ProxyTransport::Tcp,
+            Some("hk"),
+            vec![
+                ("cipher", Value::String("aes-128-gcm".to_string())),
+                ("password", Value::String("p@ss".to_string())),
+            ],
+        ),
+        build_node(
+            "SG-01",
+            ProxyProtocol::Trojan,
+            ProxyTransport::Tcp,
+            Some("sg"),
+            vec![("password", Value::String("trojan-pass".to_string()))],
+        ),
+    ];
+
+    let template = ClashRoutingTemplate {
+        groups: vec![
+            ClashRoutingTemplateGroup {
+                name: "Proxy".to_string(),
+                group_type: "select".to_string(),
+                proxies: vec!["Auto".to_string(), "DIRECT".to_string()],
+                url: None,
+                interval: None,
+                tolerance: None,
+                include_all: false,
+                use_provider: false,
+                filter: None,
+                exclude_filter: None,
+            },
+            ClashRoutingTemplateGroup {
+                name: "Auto".to_string(),
+                group_type: "select".to_string(),
+                proxies: Vec::new(),
+                url: None,
+                interval: None,
+                tolerance: None,
+                include_all: true,
+                use_provider: true,
+                filter: Some("HK".to_string()),
+                exclude_filter: None,
+            },
+        ],
+        rules: vec!["MATCH,Proxy".to_string()],
+    };
+
+    let yaml = transformer
+        .transform_with_template(&nodes, Some(&template))
+        .expect("带模板转换 YAML 失败");
+    let value: Value = serde_yaml::from_str(&yaml).expect("YAML 解析失败");
+    let groups = value
+        .get("proxy-groups")
+        .and_then(Value::as_array)
+        .expect("应包含 proxy-groups");
+    let auto_group = groups
+        .iter()
+        .find(|group| group.get("name").and_then(Value::as_str) == Some("Auto"))
+        .expect("应包含 Auto 分组");
+    let auto_group_proxies = auto_group
+        .get("proxies")
+        .and_then(Value::as_array)
+        .expect("Auto 分组缺少 proxies")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    assert_eq!(auto_group_proxies, vec!["HK-01"]);
+    assert!(!yaml.contains("rules:"), "Clash 导出不应包含 rules");
+}
+
 fn assert_snapshot(node: ProxyNode, expected_snapshot: &str) {
     let transformer = ClashTransformer::default();
     let yaml = transformer
@@ -403,6 +647,7 @@ fn test_profile() -> app_common::Profile {
         id: "profile-1".to_string(),
         name: "Default".to_string(),
         description: Some("test profile".to_string()),
+        routing_template_source_id: None,
         created_at: "2026-04-03T00:00:00Z".to_string(),
         updated_at: "2026-04-03T00:00:00Z".to_string(),
     }

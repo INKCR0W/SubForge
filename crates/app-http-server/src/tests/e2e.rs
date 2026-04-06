@@ -7,6 +7,23 @@ use tower::ServiceExt;
 
 use super::*;
 
+const CLASH_TEMPLATE_FIXTURE: &str = r#"
+proxy-groups:
+  - name: Proxy
+    type: select
+    proxies:
+      - Auto
+      - DIRECT
+  - name: Auto
+    type: select
+    use:
+      - provider-a
+    include-all: true
+    filter: HK|SG
+rules:
+  - MATCH,Proxy
+"#;
+
 #[tokio::test]
 async fn e2e_import_source_refresh_and_raw_profile_output() {
     let state = build_test_state();
@@ -664,6 +681,169 @@ async fn e2e_import_source_refresh_and_raw_profile_output() {
     );
 
     server_task.abort();
+}
+
+#[tokio::test]
+async fn e2e_profile_clash_template_source_applies_template_groups() {
+    let state = build_test_state();
+    let app = build_router(state);
+
+    let (template_upstream_base, template_server_task) = start_fixture_server(
+        CLASH_TEMPLATE_FIXTURE.trim().to_string(),
+        "text/yaml; charset=utf-8",
+    )
+    .await;
+    let (nodes_upstream_base, nodes_server_task) = start_fixture_server(
+        BASE64_SUBSCRIPTION_FIXTURE.trim().to_string(),
+        "text/plain; charset=utf-8",
+    )
+    .await;
+
+    let boundary = "----subforge-e2e-template-boundary";
+    let plugin_zip = build_builtin_plugin_zip_bytes();
+    let import_body = build_multipart_plugin_body(boundary, &plugin_zip, "builtin-static.zip");
+    let import_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/plugins/import")
+                .header(HOST, "127.0.0.1:18118")
+                .header("authorization", "Bearer test-admin-token")
+                .header(
+                    CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(import_body))
+                .expect("构建导入插件请求失败"),
+        )
+        .await
+        .expect("导入插件请求执行失败");
+    assert_eq!(import_response.status(), StatusCode::CREATED);
+
+    let template_source_response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::POST,
+            "/api/sources",
+            &json!({
+                "plugin_id": "subforge.builtin.static",
+                "name": "Template Source",
+                "config": {
+                    "url": format!("{template_upstream_base}/sub")
+                }
+            }),
+        ))
+        .await
+        .expect("创建模板来源失败");
+    assert_eq!(template_source_response.status(), StatusCode::CREATED);
+    let template_source_payload = read_json(template_source_response).await;
+    let template_source_id = template_source_payload
+        .pointer("/source/source/id")
+        .and_then(Value::as_str)
+        .expect("模板来源缺少 id")
+        .to_string();
+
+    let nodes_source_response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::POST,
+            "/api/sources",
+            &json!({
+                "plugin_id": "subforge.builtin.static",
+                "name": "Nodes Source",
+                "config": {
+                    "url": format!("{nodes_upstream_base}/sub")
+                }
+            }),
+        ))
+        .await
+        .expect("创建节点来源失败");
+    assert_eq!(nodes_source_response.status(), StatusCode::CREATED);
+    let nodes_source_payload = read_json(nodes_source_response).await;
+    let nodes_source_id = nodes_source_payload
+        .pointer("/source/source/id")
+        .and_then(Value::as_str)
+        .expect("节点来源缺少 id")
+        .to_string();
+
+    for source_id in [template_source_id.as_str(), nodes_source_id.as_str()] {
+        let refresh_response = app
+            .clone()
+            .oneshot(admin_request(
+                Method::POST,
+                &format!("/api/sources/{source_id}/refresh"),
+                Body::empty(),
+            ))
+            .await
+            .expect("刷新来源失败");
+        assert_eq!(refresh_response.status(), StatusCode::OK);
+    }
+
+    let profile_response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::POST,
+            "/api/profiles",
+            &json!({
+                "name": "Template Profile",
+                "source_ids": [template_source_id.clone(), nodes_source_id.clone()],
+                "routing_template_source_id": template_source_id,
+            }),
+        ))
+        .await
+        .expect("创建 Profile 失败");
+    assert_eq!(profile_response.status(), StatusCode::CREATED);
+    let profile_payload = read_json(profile_response).await;
+    let profile_id = profile_payload
+        .pointer("/profile/profile/id")
+        .and_then(Value::as_str)
+        .expect("Profile 缺少 id")
+        .to_string();
+    let export_token = profile_payload
+        .pointer("/profile/export_token")
+        .and_then(Value::as_str)
+        .expect("Profile 缺少 export_token")
+        .to_string();
+
+    let clash_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!(
+                    "/api/profiles/{profile_id}/clash?token={export_token}"
+                ))
+                .header(HOST, "127.0.0.1:18118")
+                .body(Body::empty())
+                .expect("构建 clash 请求失败"),
+        )
+        .await
+        .expect("获取 clash 订阅失败");
+    assert_eq!(clash_response.status(), StatusCode::OK);
+    let clash_bytes = to_bytes(clash_response.into_body(), 1024 * 1024)
+        .await
+        .expect("读取 clash 响应体失败");
+    let clash_text = String::from_utf8(clash_bytes.to_vec()).expect("clash 响应不是 UTF-8");
+    assert!(clash_text.contains("proxy-groups:"));
+    assert!(!clash_text.contains("\nrules:"));
+
+    assert!(clash_text.contains("- name: Proxy"));
+    assert!(clash_text.contains("- name: Auto"));
+
+    let auto_group_start = clash_text.find("- name: Auto").expect("缺少 Auto 分组块");
+    let auto_group_tail = &clash_text[auto_group_start..];
+    let auto_group_end = auto_group_tail
+        .get(1..)
+        .and_then(|tail| tail.find("\n- name: ").map(|index| index + 1))
+        .unwrap_or(auto_group_tail.len());
+    let auto_group_block = &auto_group_tail[..auto_group_end];
+    assert!(auto_group_block.contains("- HK-SS"));
+    assert!(auto_group_block.contains("- SG-VMESS"));
+    assert!(!auto_group_block.contains("- US-Trojan"));
+
+    template_server_task.abort();
+    nodes_server_task.abort();
 }
 
 #[tokio::test]
