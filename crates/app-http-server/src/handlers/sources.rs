@@ -128,12 +128,40 @@ pub(crate) async fn refresh_source_handler(
     State(state): State<ServerContext>,
     AxumPath(id): AxumPath<String>,
 ) -> ApiResult<RefreshSourceResponse> {
-    let engine = Engine::new(
-        state.database.as_ref(),
-        &state.plugins_dir,
-        Arc::clone(&state.secret_store),
-    );
-    let result = engine.refresh_source(&id, "manual").await;
+    let source_id = id.clone();
+    let database = Arc::clone(&state.database);
+    let plugins_dir = state.plugins_dir.clone();
+    let secret_store = Arc::clone(&state.secret_store);
+    let task_result = tokio::spawn(async move {
+        let engine = Engine::new(database.as_ref(), &plugins_dir, secret_store);
+        engine.refresh_source(&source_id, "manual").await
+    })
+    .await;
+
+    let result = match task_result {
+        Ok(result) => result,
+        Err(error) => {
+            let finished_at = current_timestamp_rfc3339().unwrap_or_else(|_| {
+                OffsetDateTime::now_utc()
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+            });
+            let refresh_repository = RefreshJobRepository::new(state.database.as_ref());
+            let _ = refresh_repository.mark_running_failed_by_source(
+                &id,
+                &finished_at,
+                "E_INTERNAL",
+                "来源刷新任务异常中止，请重试",
+            );
+            emit_event(
+                &state,
+                "refresh:failed",
+                format!("来源刷新异常中止：{id}，{error}"),
+                Some(id),
+            );
+            return Err(internal_error_response());
+        }
+    };
 
     match result {
         Ok(refresh_result) => {

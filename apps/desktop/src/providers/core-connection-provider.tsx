@@ -23,6 +23,7 @@ export function CoreConnectionProvider({ children }: PropsWithChildren) {
   const setError = useCoreUiStore((state) => state.setError);
   const setHeartbeatAt = useCoreUiStore((state) => state.setHeartbeatAt);
   const setEventStreamActive = useCoreUiStore((state) => state.setEventStreamActive);
+  const eventStreamActive = useCoreUiStore((state) => state.eventStreamActive);
   const pushEvent = useCoreUiStore((state) => state.pushEvent);
   const setLastRefreshAt = useCoreUiStore((state) => state.setLastRefreshAt);
   const setTheme = useCoreUiStore((state) => state.setTheme);

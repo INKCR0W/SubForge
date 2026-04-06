@@ -106,6 +106,27 @@ impl<'a> RefreshJobRepository<'a> {
         })
     }
 
+    pub fn mark_all_running_failed(
+        &self,
+        finished_at: &str,
+        error_code: &str,
+        error_message: &str,
+    ) -> StorageResult<usize> {
+        self.db.with_connection(|connection| {
+            let affected = connection.execute(
+                "UPDATE refresh_jobs
+                 SET status = ?1,
+                     finished_at = ?2,
+                     node_count = NULL,
+                     error_code = ?3,
+                     error_message = ?4
+                 WHERE status = 'running'",
+                params!["failed", finished_at, error_code, error_message],
+            )?;
+            Ok(affected)
+        })
+    }
+
     pub fn get_by_id(&self, id: &str) -> StorageResult<Option<RefreshJob>> {
         self.db.with_connection(|connection| {
             connection

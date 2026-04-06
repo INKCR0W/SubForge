@@ -8,8 +8,10 @@ use app_http_server::{ApiEvent, ServerContext, build_router as build_http_router
 use app_secrets::{
     EnvSecretStore, FileSecretStore, KeyringSecretStore, MemorySecretStore, SecretStore,
 };
-use app_storage::Database;
+use app_storage::{Database, RefreshJobRepository};
 use clap::Parser;
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 use crate::cli::{
     APP_VERSION, CheckArgs, Cli, Command, DEFAULT_DB_FILE_NAME, DEFAULT_HOST, DEFAULT_PORT,
@@ -65,6 +67,7 @@ async fn run_server(args: RunArgs) -> Result<()> {
 
     let database_path = resolve_database_path(&data_dir, loaded_config.as_ref())?;
     let database = initialize_database(&database_path)?;
+    recover_incomplete_refresh_jobs(database.as_ref())?;
     let mut effective_secret_args =
         build_effective_secret_args(&args.secrets, loaded_config.as_ref(), &data_dir)?;
     apply_debug_gui_secret_backend_override(&args, &mut effective_secret_args, &data_dir);
@@ -330,6 +333,28 @@ fn initialize_database(database_path: &Path) -> Result<Arc<Database>> {
         .with_context(|| format!("初始化数据库失败: {}", database_path.display()))?;
     set_owner_only_file_permissions(database_path)?;
     Ok(Arc::new(database))
+}
+
+fn recover_incomplete_refresh_jobs(database: &Database) -> Result<()> {
+    let finished_at = OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .context("生成恢复任务时间戳失败")?;
+    let repository = RefreshJobRepository::new(database);
+    let affected = repository.mark_all_running_failed(
+        &finished_at,
+        "E_INTERNAL",
+        "Core 重启导致刷新任务中断",
+    )?;
+
+    if affected > 0 {
+        eprintln!(
+            "WARNING: 检测到 {} 条未完成刷新任务，已在启动时标记为 failed。",
+            affected
+        );
+        tracing::warn!(affected, "检测到未完成刷新任务，已在启动时标记为 failed");
+    }
+
+    Ok(())
 }
 
 fn initialize_secret_store(

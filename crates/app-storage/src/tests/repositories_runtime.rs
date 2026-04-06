@@ -206,6 +206,85 @@ fn refresh_job_repository_can_finalize_running_jobs_by_source() -> StorageResult
 }
 
 #[test]
+fn refresh_job_repository_can_finalize_all_running_jobs() -> StorageResult<()> {
+    let db = Database::open_in_memory()?;
+    let source_repository = SourceRepository::new(&db);
+    let refresh_repository = RefreshJobRepository::new(&db);
+    let source_a = sample_source("source-refresh-running-global-a", "vendor.example.script");
+    let source_b = sample_source("source-refresh-running-global-b", "vendor.example.script");
+    source_repository.insert(&source_a)?;
+    source_repository.insert(&source_b)?;
+
+    refresh_repository.insert(&RefreshJob {
+        id: "refresh-job-running-global-1".to_string(),
+        source_instance_id: source_a.id.clone(),
+        trigger_type: "manual".to_string(),
+        status: "running".to_string(),
+        started_at: Some("2026-04-02T12:00:00Z".to_string()),
+        finished_at: None,
+        node_count: None,
+        error_code: None,
+        error_message: None,
+    })?;
+    refresh_repository.insert(&RefreshJob {
+        id: "refresh-job-running-global-2".to_string(),
+        source_instance_id: source_b.id.clone(),
+        trigger_type: "scheduled".to_string(),
+        status: "running".to_string(),
+        started_at: Some("2026-04-02T12:01:00Z".to_string()),
+        finished_at: None,
+        node_count: None,
+        error_code: None,
+        error_message: None,
+    })?;
+    refresh_repository.insert(&RefreshJob {
+        id: "refresh-job-failed-existing".to_string(),
+        source_instance_id: source_a.id.clone(),
+        trigger_type: "manual".to_string(),
+        status: "failed".to_string(),
+        started_at: Some("2026-04-02T11:59:00Z".to_string()),
+        finished_at: Some("2026-04-02T11:59:10Z".to_string()),
+        node_count: None,
+        error_code: Some("E_HTTP_5XX".to_string()),
+        error_message: Some("upstream 502".to_string()),
+    })?;
+
+    assert_eq!(
+        refresh_repository.mark_all_running_failed(
+            "2026-04-02T12:05:00Z",
+            "E_INTERNAL",
+            "core restarted before completion",
+        )?,
+        2
+    );
+
+    let recent = refresh_repository.list_recent(10)?;
+    let running = recent
+        .iter()
+        .filter(|job| job.status == "running")
+        .collect::<Vec<_>>();
+    assert!(running.is_empty());
+
+    let failed = recent
+        .iter()
+        .filter(|job| job.status == "failed")
+        .collect::<Vec<_>>();
+    assert_eq!(failed.len(), 3);
+    assert!(failed.iter().any(|job| {
+        job.id == "refresh-job-running-global-1"
+            && job.error_code.as_deref() == Some("E_INTERNAL")
+            && job.error_message.as_deref() == Some("core restarted before completion")
+    }));
+    assert!(failed.iter().any(|job| {
+        job.id == "refresh-job-running-global-2"
+            && job.error_code.as_deref() == Some("E_INTERNAL")
+            && job.error_message.as_deref() == Some("core restarted before completion")
+    }));
+
+    Ok(())
+}
+
+#[test]
 fn refresh_job_repository_supports_filtered_pagination() -> StorageResult<()> {
     let db = Database::open_in_memory()?;
     let source_repository = SourceRepository::new(&db);
