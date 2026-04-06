@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use app_common::ProxyNode;
-use app_storage::{Database, NodeCacheRepository};
+use app_common::{AppSetting, ProxyNode};
+use app_storage::{Database, NodeCacheRepository, SettingsRepository};
 use app_transport::{NetworkProfileFactory, TransportProfile};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT};
 use reqwest::{Client as HttpClient, Url};
@@ -12,11 +12,13 @@ use crate::{CoreError, CoreResult, SubscriptionParser, UriListParser};
 
 mod content_decode;
 mod request_guard;
+mod routing_template;
 
 use content_decode::decode_response_body;
 pub(crate) use request_guard::{
     redact_headers_for_log, redact_url_for_log, sanitize_reqwest_error, validate_content_type,
 };
+use routing_template::{extract_clash_routing_template, source_routing_template_key};
 
 const MAX_SUBSCRIPTION_BYTES: usize = 10 * 1024 * 1024;
 const SUBSCRIPTION_USERINFO_HEADER: &str = "subscription-userinfo";
@@ -229,6 +231,7 @@ where
         let payload = std::str::from_utf8(&decoded_bytes).map_err(|error| {
             CoreError::SubscriptionParse(format!("订阅内容不是 UTF-8：{error}"))
         })?;
+        self.update_clash_routing_template(source_instance_id, payload)?;
         let nodes = self.parser.parse(source_instance_id, payload)?;
         self.cache_nodes(source_instance_id, &nodes)?;
 
@@ -243,6 +246,7 @@ where
         source_instance_id: &str,
         payload: &str,
     ) -> CoreResult<Vec<ProxyNode>> {
+        self.update_clash_routing_template(source_instance_id, payload)?;
         let nodes = self.parser.parse(source_instance_id, payload)?;
         self.cache_nodes(source_instance_id, &nodes)?;
         Ok(nodes)
@@ -296,6 +300,35 @@ where
         }
 
         Ok(headers)
+    }
+
+    fn update_clash_routing_template(
+        &self,
+        source_instance_id: &str,
+        payload: &str,
+    ) -> CoreResult<()> {
+        let repository = SettingsRepository::new(self.db);
+        let key = source_routing_template_key(source_instance_id);
+        let parsed = extract_clash_routing_template(payload);
+        let now = now_rfc3339()?;
+
+        match parsed {
+            Some(template) => {
+                let value = serde_json::to_string(&template).map_err(|error| {
+                    CoreError::ConfigInvalid(format!("序列化 Clash 分流模板失败：{error}"))
+                })?;
+                repository.set(&AppSetting {
+                    key,
+                    value,
+                    updated_at: now,
+                })?;
+            }
+            None => {
+                repository.delete(&key)?;
+            }
+        }
+
+        Ok(())
     }
 }
 

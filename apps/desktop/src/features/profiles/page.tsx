@@ -1,32 +1,17 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import {
-  createProfile,
-  deleteProfile,
-  fetchProfiles,
-  fetchSources,
-  rotateProfileExportToken,
-  updateProfile,
-} from "../../lib/api";
-import {
-  patchProfileItem,
-  removeProfileItem,
-  upsertProfileItem,
-} from "../../lib/query-cache";
+import { fetchProfiles, fetchSources } from "../../lib/api";
 import { queryKeys } from "../../lib/query-keys";
 import { useCoreUiStore } from "../../stores/core-ui-store";
-import {
-  InlineActionFeedback,
-  type InlineActionState,
-} from "../../components/inline-action-feedback";
-import type { ProfileItem, ProfileListResponse } from "../../types/core";
+import { InlineActionFeedback } from "../../components/inline-action-feedback";
+import type { ProfileItem } from "../../types/core";
 import { type ProfileFormMode } from "./constants";
 import { ProfileFormCard } from "./profile-form-card";
 import { ProfileListCard } from "./profile-list-card";
-import { buildSubscriptionUrl, copySubscriptionUrl, formatTimestamp } from "./utils";
+import { buildSubscriptionUrl, copySubscriptionUrl } from "./utils";
+import { useProfileActions } from "./use-profile-actions";
 
 export default function ProfilesPage() {
-  const queryClient = useQueryClient();
   const addToast = useCoreUiStore((state) => state.addToast);
   const phase = useCoreUiStore((state) => state.phase);
   const status = useCoreUiStore((state) => state.status);
@@ -37,11 +22,22 @@ export default function ProfilesPage() {
   const [formName, setFormName] = useState("");
   const [formDescription, setFormDescription] = useState("");
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
-  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
-  const [inlineAction, setInlineAction] = useState<InlineActionState>({
-    phase: "idle",
-    title: "",
-    description: "",
+  const [selectedRoutingTemplateSourceId, setSelectedRoutingTemplateSourceId] = useState<
+    string | null
+  >(null);
+  const {
+    activeProfileId,
+    inlineAction,
+    setActiveProfileId,
+    createMutation,
+    updateMutation,
+    rotateMutation,
+    deleteMutation,
+  } = useProfileActions({
+    addToast,
+    eventDrivenSyncEnabled: eventStreamActive,
+    formMode,
+    onResetForm: resetForm,
   });
 
   const baseUrl = status?.baseUrl || "http://127.0.0.1:18118";
@@ -68,252 +64,6 @@ export default function ProfilesPage() {
     return map;
   }, [sourcesQuery.data?.sources]);
 
-  const createMutation = useMutation({
-    mutationFn: createProfile,
-    onMutate: async (input) => {
-      setInlineAction({
-        phase: "loading",
-        title: "正在创建 Profile",
-        description: `已提交 ${input.name}，等待 Core 确认。`,
-      });
-      await queryClient.cancelQueries({ queryKey: queryKeys.profiles.all });
-      const previousProfiles = queryClient.getQueryData<ProfileListResponse>(
-        queryKeys.profiles.all,
-      );
-      const optimisticProfileId = `optimistic-profile-${Date.now()}`;
-      const now = new Date().toISOString();
-
-      queryClient.setQueryData<ProfileListResponse>(queryKeys.profiles.all, (current) =>
-        upsertProfileItem(current, {
-          profile: {
-            id: optimisticProfileId,
-            name: input.name,
-            description: input.description ?? null,
-            created_at: now,
-            updated_at: now,
-          },
-          source_ids: input.sourceIds,
-          export_token: null,
-        }),
-      );
-
-      return { previousProfiles, optimisticProfileId };
-    },
-    onSuccess: (payload, _input, context) => {
-      queryClient.setQueryData<ProfileListResponse>(queryKeys.profiles.all, (current) =>
-        upsertProfileItem(
-          removeProfileItem(current, context?.optimisticProfileId ?? ""),
-          payload.profile,
-        ),
-      );
-      addToast({
-        title: "Profile 创建成功",
-        description: payload.profile.profile.name,
-        variant: "default",
-      });
-      setInlineAction({
-        phase: "success",
-        title: "Profile 创建成功",
-        description: `${payload.profile.profile.name} 已可用于导出。`,
-      });
-      resetForm();
-    },
-    onError: (error, _input, context) => {
-      if (context) {
-        queryClient.setQueryData(queryKeys.profiles.all, context.previousProfiles);
-      }
-      addToast({
-        title: "Profile 创建失败",
-        description: error instanceof Error ? error.message : "未知错误",
-        variant: "error",
-      });
-      setInlineAction({
-        phase: "error",
-        title: "Profile 创建失败",
-        description: error instanceof Error ? error.message : "未知错误",
-      });
-    },
-    onSettled: () => {
-      if (!eventStreamActive) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.profiles.all });
-      }
-    },
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: (input: {
-      profileId: string;
-      name: string;
-      description?: string | null;
-      sourceIds: string[];
-    }) =>
-      updateProfile(input.profileId, {
-        name: input.name,
-        description: input.description,
-        sourceIds: input.sourceIds,
-      }),
-    onMutate: async (input) => {
-      setInlineAction({
-        phase: "loading",
-        title: "正在保存 Profile",
-        description: `正在更新 ${input.name}。`,
-      });
-      await queryClient.cancelQueries({ queryKey: queryKeys.profiles.all });
-      const previousProfiles = queryClient.getQueryData<ProfileListResponse>(
-        queryKeys.profiles.all,
-      );
-      queryClient.setQueryData<ProfileListResponse | undefined>(queryKeys.profiles.all, (current) =>
-        patchProfileItem(current, input.profileId, {
-          name: input.name,
-          description: input.description ?? null,
-          sourceIds: input.sourceIds,
-          updatedAt: new Date().toISOString(),
-        }),
-      );
-      return { previousProfiles };
-    },
-    onSuccess: (payload) => {
-      queryClient.setQueryData<ProfileListResponse>(queryKeys.profiles.all, (current) =>
-        upsertProfileItem(current, payload.profile),
-      );
-      addToast({
-        title: "Profile 更新成功",
-        description: payload.profile.profile.name,
-        variant: "default",
-      });
-      setInlineAction({
-        phase: "success",
-        title: "Profile 保存成功",
-        description: `${payload.profile.profile.name} 已同步最新配置。`,
-      });
-    },
-    onError: (error, _input, context) => {
-      if (context) {
-        queryClient.setQueryData(queryKeys.profiles.all, context.previousProfiles);
-      }
-      addToast({
-        title: "Profile 更新失败",
-        description: error instanceof Error ? error.message : "未知错误",
-        variant: "error",
-      });
-      setInlineAction({
-        phase: "error",
-        title: "Profile 保存失败",
-        description: error instanceof Error ? error.message : "未知错误",
-      });
-    },
-    onSettled: () => {
-      if (!eventStreamActive) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.profiles.all });
-      }
-      setActiveProfileId(null);
-    },
-  });
-
-  const rotateMutation = useMutation({
-    mutationFn: rotateProfileExportToken,
-    onMutate: () => {
-      setInlineAction({
-        phase: "loading",
-        title: "正在轮换 Token",
-        description: "请求已提交，等待 Core 返回新的导出 token。",
-      });
-    },
-    onSuccess: (payload) => {
-      queryClient.setQueryData<ProfileListResponse | undefined>(
-        queryKeys.profiles.all,
-        (current) =>
-        patchProfileItem(current, payload.profile_id, {
-          exportToken: payload.token,
-          updatedAt: new Date().toISOString(),
-        }),
-      );
-      addToast({
-        title: "导出 Token 已轮换",
-        description: `旧链接将在 ${formatTimestamp(payload.previous_token_expires_at)} 失效。`,
-        variant: "warning",
-      });
-      setInlineAction({
-        phase: "success",
-        title: "Token 轮换成功",
-        description: `旧 token 将在 ${formatTimestamp(payload.previous_token_expires_at)} 失效。`,
-      });
-    },
-    onError: (error) => {
-      addToast({
-        title: "Token 轮换失败",
-        description: error instanceof Error ? error.message : "未知错误",
-        variant: "error",
-      });
-      setInlineAction({
-        phase: "error",
-        title: "Token 轮换失败",
-        description: error instanceof Error ? error.message : "未知错误",
-      });
-    },
-    onSettled: () => {
-      if (!eventStreamActive) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.profiles.all });
-      }
-      setActiveProfileId(null);
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: deleteProfile,
-    onMutate: async (profileId) => {
-      setInlineAction({
-        phase: "loading",
-        title: "正在删除 Profile",
-        description: `Profile ${profileId} 删除请求已提交。`,
-      });
-      await queryClient.cancelQueries({ queryKey: queryKeys.profiles.all });
-      const previousProfiles = queryClient.getQueryData<ProfileListResponse>(
-        queryKeys.profiles.all,
-      );
-      queryClient.setQueryData<ProfileListResponse | undefined>(queryKeys.profiles.all, (current) =>
-        removeProfileItem(current, profileId),
-      );
-      return { previousProfiles };
-    },
-    onSuccess: () => {
-      addToast({
-        title: "Profile 已删除",
-        description: "关联导出地址已失效。",
-        variant: "warning",
-      });
-      setInlineAction({
-        phase: "success",
-        title: "Profile 删除成功",
-        description: "关联导出地址已失效。",
-      });
-      if (formMode === "edit") {
-        resetForm();
-      }
-    },
-    onError: (error, _input, context) => {
-      if (context) {
-        queryClient.setQueryData(queryKeys.profiles.all, context.previousProfiles);
-      }
-      addToast({
-        title: "Profile 删除失败",
-        description: error instanceof Error ? error.message : "未知错误",
-        variant: "error",
-      });
-      setInlineAction({
-        phase: "error",
-        title: "Profile 删除失败",
-        description: error instanceof Error ? error.message : "未知错误",
-      });
-    },
-    onSettled: () => {
-      if (!eventStreamActive) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.profiles.all });
-      }
-      setActiveProfileId(null);
-    },
-  });
-
   const submitDisabled =
     !formName.trim() ||
     createMutation.isPending ||
@@ -329,6 +79,7 @@ export default function ProfilesPage() {
         name: trimmedName,
         description: description || undefined,
         sourceIds: selectedSourceIds,
+        routingTemplateSourceId: selectedRoutingTemplateSourceId,
       });
       return;
     }
@@ -342,6 +93,7 @@ export default function ProfilesPage() {
       name: trimmedName,
       description: description || null,
       sourceIds: selectedSourceIds,
+      routingTemplateSourceId: selectedRoutingTemplateSourceId,
     });
   };
 
@@ -351,6 +103,7 @@ export default function ProfilesPage() {
     setFormName(profile.profile.name);
     setFormDescription(profile.profile.description ?? "");
     setSelectedSourceIds(profile.source_ids);
+    setSelectedRoutingTemplateSourceId(profile.profile.routing_template_source_id ?? null);
   };
 
   const handleDelete = (profile: ProfileItem) => {
@@ -385,6 +138,9 @@ export default function ProfilesPage() {
       }
       return current.filter((id) => id !== sourceId);
     });
+    if (!checked && selectedRoutingTemplateSourceId === sourceId) {
+      setSelectedRoutingTemplateSourceId(null);
+    }
   };
 
   const handleCopyUrl = async (profileId: string, format: string, token?: string | null) => {
@@ -436,11 +192,13 @@ export default function ProfilesPage() {
         selectedSourceIds={selectedSourceIds}
         sourceLoading={sourcesQuery.isLoading}
         sources={sourcesQuery.data?.sources ?? []}
+        routingTemplateSourceId={selectedRoutingTemplateSourceId}
         submitDisabled={submitDisabled}
         submitting={createMutation.isPending || updateMutation.isPending}
         onNameChange={setFormName}
         onDescriptionChange={setFormDescription}
         onToggleSourceSelection={toggleSourceSelection}
+        onRoutingTemplateSourceChange={setSelectedRoutingTemplateSourceId}
         onSubmit={handleSubmit}
         onCancelEdit={resetForm}
       />
@@ -467,5 +225,6 @@ export default function ProfilesPage() {
     setFormName("");
     setFormDescription("");
     setSelectedSourceIds([]);
+    setSelectedRoutingTemplateSourceId(null);
   }
 }
