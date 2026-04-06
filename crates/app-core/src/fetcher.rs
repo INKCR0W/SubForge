@@ -7,7 +7,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT};
 use reqwest::{Client as HttpClient, Url};
 use tokio::time::sleep;
 
-use crate::utils::now_rfc3339;
+use crate::utils::{now_rfc3339, safe_stderr_line};
 use crate::{CoreError, CoreResult, SubscriptionParser, UriListParser};
 
 mod content_decode;
@@ -130,7 +130,7 @@ where
                 .await
                 .map_err(|error| {
                     let sanitized = sanitize_reqwest_error(&error, &url);
-                    eprintln!(
+                    safe_stderr_line(&format!(
                         "WARN: 订阅请求失败 source_id={} profile={} url={} elapsed_ms={} request_headers={} error={}",
                         source_instance_id,
                         profile_name,
@@ -138,13 +138,13 @@ where
                         started.elapsed().as_millis(),
                         redacted_headers,
                         sanitized
-                    );
+                    ));
                     CoreError::SubscriptionFetch(sanitized)
                 })?;
 
             let status = response.status();
             if status.is_success() {
-                eprintln!(
+                safe_stderr_line(&format!(
                     "INFO: 订阅请求成功 source_id={} profile={} url={} status={} elapsed_ms={} retries={} request_headers={}",
                     source_instance_id,
                     profile_name,
@@ -153,13 +153,13 @@ where
                     started.elapsed().as_millis(),
                     retry_attempt,
                     redacted_headers
-                );
+                ));
                 break response;
             }
             if retry_attempt < self.transport_profile.max_retries()
                 && self.transport_profile.is_retryable_status(status)
             {
-                eprintln!(
+                safe_stderr_line(&format!(
                     "WARN: 订阅请求触发重试 source_id={} profile={} url={} status={} elapsed_ms={} retry={}/{} request_headers={}",
                     source_instance_id,
                     profile_name,
@@ -169,11 +169,11 @@ where
                     retry_attempt + 1,
                     self.transport_profile.max_retries(),
                     redacted_headers
-                );
+                ));
                 retry_attempt += 1;
                 continue;
             }
-            eprintln!(
+            safe_stderr_line(&format!(
                 "WARN: 订阅请求状态异常 source_id={} profile={} url={} status={} elapsed_ms={} retries={} request_headers={}",
                 source_instance_id,
                 profile_name,
@@ -182,7 +182,7 @@ where
                 started.elapsed().as_millis(),
                 retry_attempt,
                 redacted_headers
-            );
+            ));
             return Err(CoreError::SubscriptionFetch(format!(
                 "上游响应状态码异常：{}",
                 status.as_u16()

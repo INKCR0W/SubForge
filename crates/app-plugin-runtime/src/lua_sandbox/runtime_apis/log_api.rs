@@ -18,7 +18,7 @@ pub(super) fn register_log_api(
             if let Some(sink) = info_sink.as_ref() {
                 sink.emit(RuntimeLogLevel::Info, &message);
             }
-            eprintln!("INFO: {} {}", LOG_PREFIX, message);
+            safe_stderr_line(&format!("INFO: {} {}", LOG_PREFIX, message));
             Ok(())
         })
         .map_err(map_lua_error)?;
@@ -28,7 +28,7 @@ pub(super) fn register_log_api(
             if let Some(sink) = warn_sink.as_ref() {
                 sink.emit(RuntimeLogLevel::Warn, &message);
             }
-            eprintln!("WARN: {} {}", LOG_PREFIX, message);
+            safe_stderr_line(&format!("WARN: {} {}", LOG_PREFIX, message));
             Ok(())
         })
         .map_err(map_lua_error)?;
@@ -38,7 +38,7 @@ pub(super) fn register_log_api(
             if let Some(sink) = error_sink.as_ref() {
                 sink.emit(RuntimeLogLevel::Error, &message);
             }
-            eprintln!("ERROR: {} {}", LOG_PREFIX, message);
+            safe_stderr_line(&format!("ERROR: {} {}", LOG_PREFIX, message));
             Ok(())
         })
         .map_err(map_lua_error)?;
@@ -50,4 +50,10 @@ pub(super) fn register_log_api(
     let globals = lua.globals();
     globals.set("log", log_table).map_err(map_lua_error)?;
     Ok(())
+}
+
+fn safe_stderr_line(line: &str) {
+    use std::io::Write as _;
+    let mut stderr = std::io::stderr().lock();
+    let _ = writeln!(stderr, "{line}");
 }

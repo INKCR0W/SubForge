@@ -14,6 +14,7 @@ use crate::script_executor::pipeline::{execute_fetch_stage, execute_stage};
 use crate::script_executor::state::{
     apply_state_update, parse_persisted_state, persist_state_if_changed,
 };
+use crate::utils::safe_stderr_line;
 use crate::{CoreError, CoreResult, SourceWithConfig, StaticFetcher};
 
 mod errors;
@@ -200,10 +201,10 @@ impl<'a> ScriptExecutor<'a> {
             &plugin_id,
             captured_logs,
         ) {
-            eprintln!(
+            safe_stderr_line(&format!(
                 "WARN: 脚本日志持久化失败 refresh_job_id={} source_id={} plugin_id={} error={}",
                 refresh_job_id, source_id, plugin_id, error
-            );
+            ));
         }
 
         execution_result

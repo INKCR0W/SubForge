@@ -1,6 +1,6 @@
 use app_common::ProxyNode;
 
-use crate::utils::now_rfc3339;
+use crate::utils::{now_rfc3339, safe_stderr_line};
 use crate::{CoreError, CoreResult};
 
 mod base64;
@@ -38,12 +38,12 @@ impl SubscriptionParser for UriListParser {
             match parse_proxy_uri_line(line, source_id, &updated_at) {
                 Ok(node) => nodes.push(node),
                 Err(error) => {
-                    eprintln!(
+                    safe_stderr_line(&format!(
                         "WARN: 解析订阅行失败（source_id={}, line={}）：{}",
                         source_id,
                         line_number + 1,
                         error
-                    );
+                    ));
                 }
             }
         }

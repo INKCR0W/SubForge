@@ -17,6 +17,12 @@ pub(crate) fn now_rfc3339() -> CoreResult<String> {
     Ok(OffsetDateTime::now_utc().format(&Rfc3339)?)
 }
 
+pub(crate) fn safe_stderr_line(line: &str) {
+    use std::io::Write as _;
+    let mut stderr = std::io::stderr().lock();
+    let _ = writeln!(stderr, "{line}");
+}
+
 pub(crate) fn generate_secure_token() -> CoreResult<String> {
     let mut bytes = [0_u8; 32];
     getrandom::fill(&mut bytes)?;

@@ -98,6 +98,7 @@ where
     thread::spawn(move || {
         let mut line_reader = BufReader::new(reader);
         let mut line = String::new();
+        let mut forwarding_enabled = true;
 
         loop {
             line.clear();
@@ -105,14 +106,22 @@ where
                 Ok(0) => break,
                 Ok(_) => {
                     let trimmed = line.trim();
-                    if !trimmed.is_empty() {
-                        println!("[{}] {}", stream_name, trimmed);
+                    if !trimmed.is_empty() && forwarding_enabled {
+                        // GUI 场景下 stdout/stderr 句柄可能不可用；写失败时降级为仅保留管道读取，避免线程 panic 导致子进程管道被提前关闭。
+                        forwarding_enabled =
+                            try_forward_log_line(stream_name, trimmed).is_ok();
                     }
                 }
                 Err(_) => break,
             }
         }
     });
+}
+
+fn try_forward_log_line(stream_name: &str, line: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "[{}] {}", stream_name, line)
 }
 
 pub(super) fn parse_core_event_payload(event_name: &str, data: &str) -> CoreEventPayload {
