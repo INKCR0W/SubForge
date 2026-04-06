@@ -6,6 +6,7 @@ SubForge 插件遵循统一 `plugin.json + schema.json` 规范。
 
 - `static`：直接拉取配置 URL
 - `script`：通过登录/刷新/抓取脚本获取配置数据
+  - 支持 `fetch.subscription.url` 二次拉取，默认精简请求头；也支持脚本自定义 `headers/user_agent`
 
 ## 通用必填字段（plugin.json）
 

@@ -86,6 +86,14 @@ my-plugin/
 - `{ url = "https://..." }`
 - `{ content = "base64 or uri lines text" }`
 
+当返回 `subscription.url` 时，支持可选扩展字段：
+- `headers`：对象（`string -> string`），用于二次拉取订阅 URL 的附加请求头
+- `user_agent`：字符串，用于二次拉取订阅 URL 的 `User-Agent`
+
+二次拉取默认行为：
+- 若未指定 `headers/user_agent`，Core 使用 `standard` 精简请求头拉取（避免浏览器模板头导致返回网页）
+- 若指定 `headers/user_agent`，Core 会按脚本返回值覆盖默认拉取请求头
+
 推荐约定：
 - 失败统一 `ok = false` 并返回结构化 `error`。
 - 非敏感上下文写入 `state`，敏感值写入 `secret` API。
@@ -176,6 +184,25 @@ function fetch(ctx, config, state)
   return {
     ok = true,
     subscription = { content = resp.body },
+    state = state
+  }
+end
+```
+
+## 示例：返回 URL 并自定义二次拉取请求头
+
+```lua
+function fetch(ctx, config, state)
+  return {
+    ok = true,
+    subscription = {
+      url = config.subscription_url,
+      headers = {
+        ["accept"] = "text/plain",
+        ["x-sub-token"] = config.sub_token
+      },
+      user_agent = "clash.meta"
+    },
     state = state
   }
 end
