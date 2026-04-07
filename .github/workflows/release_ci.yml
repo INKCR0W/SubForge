@@ -15,6 +15,7 @@ permissions:
 
 env:
   RELEASE_ARTIFACT_RETENTION_DAYS: 14
+  PNPM_VERSION: 10.32.0
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -29,10 +30,10 @@ jobs:
             platform: ubuntu-22.04
             arch: x86_64
           - os: windows-latest
-            platform: windows-latest
+            platform: windows-10
             arch: x86_64
           - os: macos-latest
-            platform: macos-latest
+            platform: macos-13
             arch: arm64
     steps:
       - uses: actions/checkout@v4
@@ -86,7 +87,7 @@ jobs:
       - uses: taiki-e/install-action@cargo-audit
       - uses: pnpm/action-setup@v4
         with:
-          version: 10.27.0
+          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -122,13 +123,13 @@ jobs:
             platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
           - os: windows-latest
-            platform: windows-latest
+            platform: windows-10
             target: x86_64-pc-windows-msvc
           - os: macos-latest
-            platform: macos-latest
+            platform: macos-13
             target: x86_64-apple-darwin
           - os: macos-latest
-            platform: macos-latest
+            platform: macos-13
             target: aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v4
@@ -197,13 +198,13 @@ jobs:
             platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
           - os: windows-latest
-            platform: windows-latest
+            platform: windows-10
             target: x86_64-pc-windows-msvc
           - os: macos-latest
-            platform: macos-latest
+            platform: macos-13
             target: x86_64-apple-darwin
           - os: macos-latest
-            platform: macos-latest
+            platform: macos-13
             target: aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v4
@@ -221,7 +222,7 @@ jobs:
           done
       - uses: pnpm/action-setup@v4
         with:
-          version: 10.27.0
+          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -284,13 +285,13 @@ jobs:
             platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
           - os: windows-latest
-            platform: windows-latest
+            platform: windows-10
             target: x86_64-pc-windows-msvc
           - os: macos-latest
-            platform: macos-latest
+            platform: macos-13
             target: x86_64-apple-darwin
           - os: macos-latest
-            platform: macos-latest
+            platform: macos-13
             target: aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v4
@@ -308,7 +309,7 @@ jobs:
           done
       - uses: pnpm/action-setup@v4
         with:
-          version: 10.27.0
+          version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -353,7 +354,7 @@ jobs:
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: subforge-desktop-bundle-${{ matrix.platform }}-${{ matrix.target }}-nsis
+          name: subforge-desktop-${{ matrix.platform }}-${{ matrix.target }}-nsis
           path: target/${{ matrix.target }}/release/bundle/nsis/*.exe
           if-no-files-found: error
           retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}
@@ -361,7 +362,7 @@ jobs:
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
-          name: subforge-desktop-bundle-${{ matrix.platform }}-${{ matrix.target }}-dmg
+          name: subforge-desktop-${{ matrix.platform }}-${{ matrix.target }}-dmg
           path: target/${{ matrix.target }}/release/bundle/dmg/*.dmg
           if-no-files-found: error
           retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}
@@ -369,7 +370,7 @@ jobs:
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: subforge-desktop-bundle-${{ matrix.platform }}-${{ matrix.target }}-deb
+          name: subforge-desktop-${{ matrix.platform }}-${{ matrix.target }}-deb
           path: target/${{ matrix.target }}/release/bundle/deb/*.deb
           if-no-files-found: error
           retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}
@@ -377,7 +378,7 @@ jobs:
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: subforge-desktop-bundle-${{ matrix.platform }}-${{ matrix.target }}-appimage
+          name: subforge-desktop-${{ matrix.platform }}-${{ matrix.target }}-appimage
           path: target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
           if-no-files-found: error
           retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}
@@ -391,7 +392,7 @@ jobs:
       - name: Download NSIS bundle artifact
         uses: actions/download-artifact@v4
         with:
-          name: subforge-desktop-bundle-windows-latest-x86_64-pc-windows-msvc-nsis
+          name: subforge-desktop-windows-10-x86_64-pc-windows-msvc-nsis
           path: dist
       - name: Install and verify desktop bundle auto-starts core
         shell: pwsh
@@ -530,7 +531,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-install-smoke-logs-windows-latest
+          name: desktop-install-smoke-logs-windows-10
           path: ${{ runner.temp }}/desktop-install-smoke-logs
           if-no-files-found: warn
           retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}

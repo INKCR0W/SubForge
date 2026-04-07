@@ -9,6 +9,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ### Changed
 
 - Project license switched to `GPL-3.0-only`.
+- 发布流水线产物命名切换为稳定平台标签，并统一对齐 `14` 天 CI artifact 保留基线。
+- 工作流与仓库包管理声明统一对齐到 `pnpm 10.32.0`。
 
 ## [0.1.0] - 2026-04-04
 

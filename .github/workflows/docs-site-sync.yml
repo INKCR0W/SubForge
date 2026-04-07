@@ -14,6 +14,9 @@ on:
 permissions:
   contents: write
 
+env:
+  PNPM_VERSION: 10.32.0
+
 concurrency:
   group: docs-site-sync
   cancel-in-progress: true
@@ -28,7 +31,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10.27.0
+          version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

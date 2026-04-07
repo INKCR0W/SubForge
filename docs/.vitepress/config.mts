@@ -44,6 +44,7 @@ export default defineConfig({
         text: "部署",
         items: [
           { text: "无头部署", link: "/deploy/headless" },
+          { text: "发布产物", link: "/deploy/release-artifacts" },
           { text: "常见问题", link: "/faq" }
         ]
       }
