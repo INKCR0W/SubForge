@@ -116,6 +116,7 @@ pub(super) fn sample_profile(id: &str) -> Profile {
         id: id.to_string(),
         name: "Default Profile".to_string(),
         description: Some("默认配置".to_string()),
+        routing_template_source_id: None,
         created_at: "2026-04-02T01:20:00Z".to_string(),
         updated_at: "2026-04-02T01:20:00Z".to_string(),
     }

@@ -697,6 +697,7 @@ fn engine_ensure_profile_export_token_is_idempotent() {
         id: "profile-engine-token".to_string(),
         name: "Engine Token".to_string(),
         description: None,
+        routing_template_source_id: None,
         created_at: "2026-04-02T07:00:00Z".to_string(),
         updated_at: "2026-04-02T07:00:00Z".to_string(),
     };
@@ -736,6 +737,7 @@ fn engine_rotate_profile_export_token_keeps_grace_window() {
         id: "profile-engine-token-rotate".to_string(),
         name: "Engine Token Rotate".to_string(),
         description: None,
+        routing_template_source_id: None,
         created_at: "2026-04-02T07:30:00Z".to_string(),
         updated_at: "2026-04-02T07:30:00Z".to_string(),
     };

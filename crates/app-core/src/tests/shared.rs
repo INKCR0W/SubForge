@@ -10,7 +10,7 @@ pub(super) use app_common::ProxyProtocol;
 pub(super) use app_secrets::{MemorySecretStore, SecretStore};
 pub(super) use app_storage::{
     Database, ExportTokenRepository, NodeCacheRepository, PluginRepository, RefreshJobRepository,
-    ScriptLogRepository, SourceConfigRepository, SourceRepository,
+    ScriptLogRepository, SettingsRepository, SourceConfigRepository, SourceRepository,
 };
 pub(super) use axum::Router;
 pub(super) use axum::http::{HeaderMap as AxumHeaderMap, StatusCode};

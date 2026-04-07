@@ -9,6 +9,13 @@ pub(crate) async fn create_profile_handler(
         return Err(config_error_response("profile.name 不能为空"));
     }
     validate_source_ids_exist(state.database.as_ref(), &payload.source_ids)?;
+    let routing_template_source_id =
+        normalize_routing_template_source_id(payload.routing_template_source_id.as_deref())?;
+    ensure_routing_template_source_in_scope(
+        state.database.as_ref(),
+        &payload.source_ids,
+        routing_template_source_id.as_deref(),
+    )?;
 
     let now = current_timestamp_rfc3339().map_err(|_| internal_error_response())?;
     let profile = Profile {
@@ -18,6 +25,7 @@ pub(crate) async fn create_profile_handler(
         ),
         name: name.to_string(),
         description: payload.description.map(|value| value.trim().to_string()),
+        routing_template_source_id: routing_template_source_id.clone(),
         created_at: now.clone(),
         updated_at: now,
     };
@@ -25,8 +33,20 @@ pub(crate) async fn create_profile_handler(
     repository
         .insert(&profile)
         .map_err(storage_error_to_response)?;
-    replace_profile_sources(state.database.as_ref(), &profile.id, &payload.source_ids)
-        .map_err(storage_error_to_response)?;
+    if let Err(error) =
+        replace_profile_sources(state.database.as_ref(), &profile.id, &payload.source_ids)
+    {
+        let _ = repository.delete(&profile.id);
+        return Err(storage_error_to_response(error));
+    }
+    if let Err(error) = persist_profile_routing_template_source(
+        state.database.as_ref(),
+        &profile.id,
+        routing_template_source_id.as_deref(),
+    ) {
+        let _ = repository.delete(&profile.id);
+        return Err(storage_error_to_response(error));
+    }
     let engine = Engine::new(
         state.database.as_ref(),
         &state.plugins_dir,
@@ -35,6 +55,8 @@ pub(crate) async fn create_profile_handler(
     let export_token = match engine.ensure_profile_export_token(&profile.id) {
         Ok(token) => token,
         Err(error) => {
+            let settings_repository = SettingsRepository::new(state.database.as_ref());
+            let _ = settings_repository.delete(&profile_routing_template_source_key(&profile.id));
             let _ = repository.delete(&profile.id);
             return Err(core_error_to_response(error));
         }
@@ -64,34 +86,62 @@ pub(crate) async fn update_profile_handler(
     Json(payload): Json<UpdateProfileRequest>,
 ) -> ApiResult<ProfileResponse> {
     let repository = ProfileRepository::new(state.database.as_ref());
+    let UpdateProfileRequest {
+        name,
+        description,
+        source_ids: requested_source_ids,
+        routing_template_source_id: requested_routing_template_source_id,
+    } = payload;
     let mut profile = repository
         .get_by_id(&id)
         .map_err(storage_error_to_response)?
         .ok_or_else(|| not_found_error_response("Profile 不存在"))?;
+    profile.routing_template_source_id =
+        resolve_profile_routing_template_source(state.database.as_ref(), &profile.id)
+            .map_err(storage_error_to_response)?;
+    let replace_sources = requested_source_ids.is_some();
+    let source_ids = if let Some(source_ids) = requested_source_ids {
+        validate_source_ids_exist(state.database.as_ref(), &source_ids)?;
+        source_ids
+    } else {
+        list_profile_source_ids(state.database.as_ref(), &id).map_err(storage_error_to_response)?
+    };
+    let mut routing_template_source_id = profile.routing_template_source_id.clone();
+    if let Some(value) = requested_routing_template_source_id {
+        routing_template_source_id = normalize_routing_template_source_id(value.as_deref())?;
+    }
+    ensure_routing_template_source_in_scope(
+        state.database.as_ref(),
+        &source_ids,
+        routing_template_source_id.as_deref(),
+    )?;
 
-    if let Some(name) = payload.name {
+    if let Some(name) = name {
         let name = name.trim();
         if name.is_empty() {
             return Err(config_error_response("profile.name 不能为空"));
         }
         profile.name = name.to_string();
     }
-    if let Some(description) = payload.description {
+    if let Some(description) = description {
         profile.description = description.map(|value| value.trim().to_string());
     }
+    profile.routing_template_source_id = routing_template_source_id.clone();
     profile.updated_at = current_timestamp_rfc3339().map_err(|_| internal_error_response())?;
     repository
         .update(&profile)
         .map_err(storage_error_to_response)?;
 
-    let source_ids = if let Some(source_ids) = payload.source_ids {
-        validate_source_ids_exist(state.database.as_ref(), &source_ids)?;
+    if replace_sources {
         replace_profile_sources(state.database.as_ref(), &id, &source_ids)
             .map_err(storage_error_to_response)?;
-        source_ids
-    } else {
-        list_profile_source_ids(state.database.as_ref(), &id).map_err(storage_error_to_response)?
-    };
+    }
+    persist_profile_routing_template_source(
+        state.database.as_ref(),
+        &id,
+        routing_template_source_id.as_deref(),
+    )
+    .map_err(storage_error_to_response)?;
 
     state.profile_cache.invalidate(&id);
     let profile_dto = build_profile_dto(state.database.as_ref(), profile, source_ids)?;
@@ -118,6 +168,8 @@ pub(crate) async fn delete_profile_handler(
     if affected == 0 {
         return Err(not_found_error_response("Profile 不存在"));
     }
+    let settings_repository = SettingsRepository::new(state.database.as_ref());
+    let _ = settings_repository.delete(&profile_routing_template_source_key(&id));
     state.profile_cache.invalidate(&id);
     emit_event(
         &state,

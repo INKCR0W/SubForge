@@ -33,6 +33,7 @@ pub(crate) fn map_profile_row(row: &Row<'_>) -> rusqlite::Result<Profile> {
         id: row.get("id")?,
         name: row.get("name")?,
         description: row.get("description")?,
+        routing_template_source_id: None,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
     })

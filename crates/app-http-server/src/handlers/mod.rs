@@ -239,6 +239,8 @@ pub(crate) struct CreateProfileRequest {
     pub(crate) description: Option<String>,
     #[serde(default)]
     pub(crate) source_ids: Vec<String>,
+    #[serde(default)]
+    pub(crate) routing_template_source_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -249,6 +251,8 @@ pub(crate) struct UpdateProfileRequest {
     pub(crate) description: Option<Option<String>>,
     #[serde(default)]
     pub(crate) source_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub(crate) routing_template_source_id: Option<Option<String>>,
 }
 
 #[derive(Debug, Deserialize)]

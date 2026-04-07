@@ -53,4 +53,11 @@ impl<'a> SettingsRepository<'a> {
             Ok(items)
         })
     }
+
+    pub fn delete(&self, key: &str) -> StorageResult<usize> {
+        self.db.with_connection(|connection| {
+            let affected = connection.execute("DELETE FROM app_settings WHERE key = ?1", [key])?;
+            Ok(affected)
+        })
+    }
 }

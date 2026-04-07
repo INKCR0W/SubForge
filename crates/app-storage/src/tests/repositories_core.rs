@@ -191,5 +191,8 @@ fn settings_repository_supports_upsert() -> StorageResult<()> {
     let all = repository.get_all()?;
     assert_eq!(all, vec![secondary_setting, updated_setting]);
 
+    assert_eq!(repository.delete("ui.theme")?, 1);
+    assert!(repository.get("ui.theme")?.is_none());
+
     Ok(())
 }

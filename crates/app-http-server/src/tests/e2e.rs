@@ -1,5 +1,6 @@
 use std::fs;
 
+use crate::helpers::list_profile_source_ids;
 use app_storage::SettingsRepository;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header::CONTENT_TYPE, header::HOST};
@@ -1099,6 +1100,129 @@ async fn e2e_profile_clash_template_source_applies_template_groups() {
 
     template_server_task.abort();
     nodes_server_task.abort();
+}
+
+#[tokio::test]
+async fn e2e_profile_update_rejects_invalid_template_source_without_partial_write() {
+    let state = build_test_state();
+    let app = build_router(state.clone());
+
+    let boundary = "----subforge-e2e-template-update-boundary";
+    let plugin_zip = build_builtin_plugin_zip_bytes();
+    let import_body = build_multipart_plugin_body(boundary, &plugin_zip, "builtin-static.zip");
+    let import_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/plugins/import")
+                .header(HOST, "127.0.0.1:18118")
+                .header("authorization", "Bearer test-admin-token")
+                .header(
+                    CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(import_body))
+                .expect("构建导入插件请求失败"),
+        )
+        .await
+        .expect("导入插件请求执行失败");
+    assert_eq!(import_response.status(), StatusCode::CREATED);
+
+    let template_source_response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::POST,
+            "/api/sources",
+            &json!({
+                "plugin_id": "subforge.builtin.static",
+                "name": "Template Source",
+                "config": {
+                    "url": "https://example.com/template-sub"
+                }
+            }),
+        ))
+        .await
+        .expect("创建模板来源失败");
+    assert_eq!(template_source_response.status(), StatusCode::CREATED);
+    let template_source_payload = read_json(template_source_response).await;
+    let template_source_id = template_source_payload
+        .pointer("/source/source/id")
+        .and_then(Value::as_str)
+        .expect("模板来源缺少 id")
+        .to_string();
+
+    let nodes_source_response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::POST,
+            "/api/sources",
+            &json!({
+                "plugin_id": "subforge.builtin.static",
+                "name": "Nodes Source",
+                "config": {
+                    "url": "https://example.com/nodes-sub"
+                }
+            }),
+        ))
+        .await
+        .expect("创建节点来源失败");
+    assert_eq!(nodes_source_response.status(), StatusCode::CREATED);
+    let nodes_source_payload = read_json(nodes_source_response).await;
+    let nodes_source_id = nodes_source_payload
+        .pointer("/source/source/id")
+        .and_then(Value::as_str)
+        .expect("节点来源缺少 id")
+        .to_string();
+
+    let profile_response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::POST,
+            "/api/profiles",
+            &json!({
+                "name": "Template Scope Profile",
+                "source_ids": [template_source_id.clone(), nodes_source_id.clone()],
+                "routing_template_source_id": template_source_id.clone(),
+            }),
+        ))
+        .await
+        .expect("创建 Profile 失败");
+    assert_eq!(profile_response.status(), StatusCode::CREATED);
+    let profile_payload = read_json(profile_response).await;
+    let profile_id = profile_payload
+        .pointer("/profile/profile/id")
+        .and_then(Value::as_str)
+        .expect("Profile 缺少 id")
+        .to_string();
+
+    let update_response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::PUT,
+            &format!("/api/profiles/{profile_id}"),
+            &json!({
+                "source_ids": [nodes_source_id.clone()]
+            }),
+        ))
+        .await
+        .expect("更新 Profile 失败");
+    assert_eq!(update_response.status(), StatusCode::BAD_REQUEST);
+
+    let persisted_source_ids = list_profile_source_ids(state.database.as_ref(), &profile_id)
+        .expect("读取 Profile 来源失败");
+    assert_eq!(
+        persisted_source_ids,
+        vec![template_source_id.clone(), nodes_source_id],
+        "失败更新不应写入部分 source_ids 变更"
+    );
+
+    let settings_repository = SettingsRepository::new(state.database.as_ref());
+    let template_setting = settings_repository
+        .get(&format!("profile.{profile_id}.clash_template_source_id"))
+        .expect("读取模板来源设置失败")
+        .expect("Profile 应保留原模板来源设置");
+    assert_eq!(template_setting.value, template_source_id);
 }
 
 #[tokio::test]

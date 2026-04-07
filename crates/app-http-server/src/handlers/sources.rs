@@ -113,8 +113,18 @@ pub(crate) async fn delete_source_handler(
         state.secret_store.as_ref(),
     );
     service.delete_source(&id).map_err(core_error_to_response)?;
+    let settings_repository = SettingsRepository::new(state.database.as_ref());
+    for profile_id in &related_profiles {
+        let key = format!("profile.{profile_id}.clash_template_source_id");
+        if let Ok(Some(setting)) = settings_repository.get(&key)
+            && setting.value.trim() == id
+        {
+            let _ = settings_repository.delete(&key);
+        }
+    }
     state.profile_cache.invalidate_many(&related_profiles);
     state.source_userinfo_cache.set(&id, None);
+    let _ = settings_repository.delete(&format!("source.{id}.clash_routing_template"));
     emit_event(
         &state,
         "source:deleted",

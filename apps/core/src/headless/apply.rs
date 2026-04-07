@@ -6,7 +6,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use app_common::{AppSetting, Profile};
 use app_core::{CoreError, PluginInstallService, SourceService};
 use app_secrets::SecretStore;
-use app_storage::{Database, ProfileRepository};
+use app_storage::{Database, ProfileRepository, SettingsRepository};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -197,6 +197,7 @@ fn apply_profiles(
                 .update(&next)
                 .map_err(|error| anyhow!("更新 Profile 失败（{}）: {error}", profile.name))?;
             replace_profile_sources(database, &next.id, &source_ids)?;
+            clear_profile_routing_template_source(database, &next.id)?;
             report.updated_profiles += 1;
             next.id
         } else {
@@ -208,6 +209,7 @@ fn apply_profiles(
                 ),
                 name: profile.name.clone(),
                 description: profile.description.clone(),
+                routing_template_source_id: None,
                 created_at: now.clone(),
                 updated_at: now,
             };
@@ -215,6 +217,7 @@ fn apply_profiles(
                 .insert(&created)
                 .map_err(|error| anyhow!("创建 Profile 失败（{}）: {error}", profile.name))?;
             replace_profile_sources(database, &created.id, &source_ids)?;
+            clear_profile_routing_template_source(database, &created.id)?;
             report.created_profiles += 1;
             created.id
         };
@@ -253,6 +256,13 @@ fn replace_profile_sources(
             Ok(())
         })
         .map_err(Into::into)
+}
+
+fn clear_profile_routing_template_source(database: &Database, profile_id: &str) -> Result<()> {
+    let repository = SettingsRepository::new(database);
+    let key = format!("profile.{profile_id}.clash_template_source_id");
+    repository.delete(&key)?;
+    Ok(())
 }
 
 fn now_rfc3339() -> Result<String> {

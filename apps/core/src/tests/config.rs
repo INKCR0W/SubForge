@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use app_common::AppSetting;
 use app_secrets::{MemorySecretStore, SecretStore};
-use app_storage::{Database, ProfileRepository};
+use app_storage::{Database, ProfileRepository, SettingsRepository};
 use serde_json::json;
 
 use crate::config::LoadedHeadlessConfig;
@@ -112,6 +113,19 @@ sources = ["static-a"]
     assert_eq!(first.created_sources, 1);
     assert_eq!(first.created_profiles, 1);
 
+    let sources = list_sources(&database).expect("读取来源列表失败");
+    let profiles = ProfileRepository::new(&database)
+        .list()
+        .expect("读取 Profile 列表失败");
+    let stale_template_key = format!("profile.{}.clash_template_source_id", profiles[0].id);
+    SettingsRepository::new(&database)
+        .set(&AppSetting {
+            key: stale_template_key.clone(),
+            value: sources[0].id.clone(),
+            updated_at: "2026-04-08T00:00:00Z".to_string(),
+        })
+        .expect("写入陈旧模板来源设置失败");
+
     let second = apply_headless_configuration(
         &loaded,
         &database,
@@ -134,6 +148,13 @@ sources = ["static-a"]
     let profile_sources =
         list_profile_source_ids(&database, &profiles[0].id).expect("读取 Profile 关联来源失败");
     assert_eq!(profile_sources, vec![sources[0].id.clone()]);
+    assert!(
+        SettingsRepository::new(&database)
+            .get(&stale_template_key)
+            .expect("读取模板来源设置失败")
+            .is_none(),
+        "无头配置重复应用时应清除陈旧模板来源设置"
+    );
 }
 
 #[cfg(unix)]
