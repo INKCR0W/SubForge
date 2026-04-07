@@ -33,6 +33,11 @@
 - `GET /api/profiles/{id}/base64?token=...`
 - `GET /api/profiles/{id}/raw?token=...`
 
+说明：
+- 四个端点共享同一份最终聚合节点集。
+- 如果 Profile 绑定了路由模板来源，`/clash` 与 `/sing-box` 会保留模板分组/规则语义，并把聚合节点追加到输出节点集与可注入分组中。
+- `/base64` 与 `/raw` 仅输出最终聚合节点集，不包含模板规则。
+
 ## 统一错误结构
 
 ```json
