@@ -2,14 +2,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use app_common::{ClashRoutingTemplate, Profile, ProxyNode};
 use serde::Serialize;
-use serde_yaml::{Mapping as YamlMapping, Value as YamlValue};
 
 use crate::shared::push_unique_proxy_name;
-use crate::{TransformResult, Transformer};
+use crate::{RoutingTemplateExportContext, TransformResult, Transformer};
 
 mod group_utils;
+mod output;
 mod proxy;
 use group_utils::{collect_region_groups, filter_group_candidate_nodes, is_builtin_policy};
+use output::{ClashConfig, ClashProxyGroup, serialize_with_base_config};
 
 /// Clash/Mihomo YAML 转换器。
 #[derive(Debug, Clone)]
@@ -41,17 +42,33 @@ impl ClashTransformer {
         nodes: &[ProxyNode],
         routing_template: Option<&ClashRoutingTemplate>,
     ) -> TransformResult<String> {
+        let template_context =
+            routing_template
+                .cloned()
+                .map(|template| RoutingTemplateExportContext {
+                    template,
+                    appended_nodes: nodes.to_vec(),
+                });
+        self.transform_with_template_context(nodes, template_context.as_ref())
+    }
+
+    pub fn transform_with_template_context(
+        &self,
+        nodes: &[ProxyNode],
+        template_context: Option<&RoutingTemplateExportContext>,
+    ) -> TransformResult<String> {
         let mut proxies = Vec::with_capacity(nodes.len());
         for node in nodes {
             proxies.push(proxy::build_clash_proxy(node)?);
         }
 
-        let (proxy_groups, template_applied) = match routing_template {
-            Some(template) => self.build_proxy_groups_from_template(nodes, template),
+        let (proxy_groups, template_applied) = match template_context {
+            Some(context) => self.build_proxy_groups_from_template(nodes, context),
             None => (self.build_proxy_groups(nodes), false),
         };
         let rules = if template_applied {
-            routing_template.and_then(|template| {
+            template_context.and_then(|context| {
+                let template = &context.template;
                 if template.rules.is_empty() {
                     None
                 } else {
@@ -62,11 +79,11 @@ impl ClashTransformer {
             None
         };
 
-        if let Some(template) = routing_template
+        if let Some(template) = template_context.map(|context| &context.template)
             && let Some(base_config_yaml) = template.base_config_yaml.as_deref()
             && !base_config_yaml.trim().is_empty()
         {
-            return self.serialize_with_base_config(base_config_yaml, proxies, proxy_groups, rules);
+            return serialize_with_base_config(base_config_yaml, proxies, proxy_groups, rules);
         }
 
         let config = ClashConfig {
@@ -129,9 +146,15 @@ impl ClashTransformer {
     fn build_proxy_groups_from_template(
         &self,
         nodes: &[ProxyNode],
-        routing_template: &ClashRoutingTemplate,
+        template_context: &RoutingTemplateExportContext,
     ) -> (Vec<ClashProxyGroup>, bool) {
-        let aggregated_node_names = nodes
+        let routing_template = &template_context.template;
+        let final_node_names = nodes
+            .iter()
+            .map(|node| node.name.clone())
+            .collect::<Vec<_>>();
+        let appended_node_names = template_context
+            .appended_nodes
             .iter()
             .map(|node| node.name.clone())
             .collect::<Vec<_>>();
@@ -143,18 +166,28 @@ impl ClashTransformer {
 
         let mut groups = Vec::with_capacity(routing_template.groups.len());
         for template_group in &routing_template.groups {
-            let candidate_nodes = filter_group_candidate_nodes(
-                &aggregated_node_names,
-                template_group.filter.as_deref(),
-                template_group.exclude_filter.as_deref(),
-            );
             let has_plain_node_slot = template_group
                 .proxies
                 .iter()
                 .any(|item| !group_name_set.contains(item.as_str()) && !is_builtin_policy(item));
-            let should_append_nodes = has_plain_node_slot
-                || (template_group.proxies.is_empty()
-                    && (template_group.include_all || template_group.use_provider));
+            let populate_all_nodes = template_group.proxies.is_empty()
+                && (template_group.include_all || template_group.use_provider);
+            let candidate_nodes = if has_plain_node_slot {
+                filter_group_candidate_nodes(
+                    &appended_node_names,
+                    template_group.filter.as_deref(),
+                    template_group.exclude_filter.as_deref(),
+                )
+            } else if populate_all_nodes {
+                filter_group_candidate_nodes(
+                    &final_node_names,
+                    template_group.filter.as_deref(),
+                    template_group.exclude_filter.as_deref(),
+                )
+            } else {
+                Vec::new()
+            };
+            let should_append_nodes = has_plain_node_slot || populate_all_nodes;
 
             let mut proxies = Vec::new();
             if routing_template.preserve_original_proxy_names {
@@ -203,57 +236,6 @@ impl ClashTransformer {
             (groups, true)
         }
     }
-
-    fn serialize_with_base_config(
-        &self,
-        base_config_yaml: &str,
-        proxies: Vec<ClashProxy>,
-        proxy_groups: Vec<ClashProxyGroup>,
-        rules: Option<Vec<String>>,
-    ) -> TransformResult<String> {
-        let mut root = match serde_yaml::from_str::<YamlValue>(base_config_yaml)? {
-            YamlValue::Mapping(mapping) => mapping,
-            _ => YamlMapping::new(),
-        };
-        root.insert(
-            YamlValue::String("proxies".to_string()),
-            serde_yaml::to_value(proxies)?,
-        );
-        root.insert(
-            YamlValue::String("proxy-groups".to_string()),
-            serde_yaml::to_value(proxy_groups)?,
-        );
-        if let Some(rules) = rules {
-            root.insert(
-                YamlValue::String("rules".to_string()),
-                serde_yaml::to_value(rules)?,
-            );
-        }
-        Ok(serde_yaml::to_string(&YamlValue::Mapping(root))?)
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct ClashConfig {
-    proxies: Vec<ClashProxy>,
-    #[serde(rename = "proxy-groups")]
-    proxy_groups: Vec<ClashProxyGroup>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    rules: Option<Vec<String>>,
-}
-
-#[derive(Debug, Serialize)]
-struct ClashProxyGroup {
-    name: String,
-    #[serde(rename = "type")]
-    group_type: String,
-    proxies: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    interval: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tolerance: Option<u16>,
 }
 
 #[derive(Debug, Serialize)]

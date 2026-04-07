@@ -2,7 +2,7 @@ use app_common::{ClashRoutingTemplate, Profile, ProxyNode};
 use serde::Serialize;
 
 use crate::shared::push_unique_proxy_name;
-use crate::{TransformResult, Transformer};
+use crate::{RoutingTemplateExportContext, TransformResult, Transformer};
 
 #[path = "singbox_outbound.rs"]
 mod outbound;
@@ -44,6 +44,21 @@ impl SingboxTransformer {
         nodes: &[ProxyNode],
         routing_template: Option<&ClashRoutingTemplate>,
     ) -> TransformResult<String> {
+        let template_context =
+            routing_template
+                .cloned()
+                .map(|template| RoutingTemplateExportContext {
+                    template,
+                    appended_nodes: nodes.to_vec(),
+                });
+        self.transform_with_template_context(nodes, template_context.as_ref())
+    }
+
+    pub fn transform_with_template_context(
+        &self,
+        nodes: &[ProxyNode],
+        template_context: Option<&RoutingTemplateExportContext>,
+    ) -> TransformResult<String> {
         let mut node_tags = Vec::with_capacity(nodes.len());
         let mut node_outbounds = Vec::with_capacity(nodes.len());
         for node in nodes {
@@ -51,8 +66,8 @@ impl SingboxTransformer {
             node_outbounds.push(build_singbox_node_outbound(node)?);
         }
 
-        let mut group_outbounds = match routing_template {
-            Some(template) => self.build_template_groups(nodes, template),
+        let mut group_outbounds = match template_context {
+            Some(context) => self.build_template_groups(nodes, context),
             None => self.build_default_groups(&node_tags),
         };
         let mut builtin_outbounds = build_builtin_outbounds(&group_outbounds);
@@ -128,9 +143,15 @@ impl SingboxTransformer {
     fn build_template_groups(
         &self,
         nodes: &[ProxyNode],
-        routing_template: &ClashRoutingTemplate,
+        template_context: &RoutingTemplateExportContext,
     ) -> Vec<SingboxOutbound> {
-        let aggregated_node_tags = nodes
+        let routing_template = &template_context.template;
+        let final_node_tags = nodes
+            .iter()
+            .map(|node| node.name.clone())
+            .collect::<Vec<_>>();
+        let appended_node_tags = template_context
+            .appended_nodes
             .iter()
             .map(|node| node.name.clone())
             .collect::<Vec<_>>();
@@ -142,18 +163,28 @@ impl SingboxTransformer {
 
         let mut groups = Vec::with_capacity(routing_template.groups.len());
         for template_group in &routing_template.groups {
-            let candidate_tags = filter_group_candidate_tags(
-                &aggregated_node_tags,
-                template_group.filter.as_deref(),
-                template_group.exclude_filter.as_deref(),
-            );
             let has_plain_node_slot = template_group
                 .proxies
                 .iter()
                 .any(|item| !group_name_set.contains(item.as_str()) && !is_builtin_policy(item));
-            let should_append_nodes = has_plain_node_slot
-                || (template_group.proxies.is_empty()
-                    && (template_group.include_all || template_group.use_provider));
+            let populate_all_nodes = template_group.proxies.is_empty()
+                && (template_group.include_all || template_group.use_provider);
+            let candidate_tags = if has_plain_node_slot {
+                filter_group_candidate_tags(
+                    &appended_node_tags,
+                    template_group.filter.as_deref(),
+                    template_group.exclude_filter.as_deref(),
+                )
+            } else if populate_all_nodes {
+                filter_group_candidate_tags(
+                    &final_node_tags,
+                    template_group.filter.as_deref(),
+                    template_group.exclude_filter.as_deref(),
+                )
+            } else {
+                Vec::new()
+            };
+            let should_append_nodes = has_plain_node_slot || populate_all_nodes;
 
             let mut targets = Vec::new();
             if routing_template.preserve_original_proxy_names {
@@ -235,7 +266,7 @@ impl SingboxTransformer {
         }
 
         if groups.is_empty() {
-            self.build_default_groups(&aggregated_node_tags)
+            self.build_default_groups(&final_node_tags)
         } else {
             groups
         }

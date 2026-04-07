@@ -12,8 +12,16 @@ use super::*;
 
 mod export;
 mod read;
+mod template_export;
+mod template_settings;
 mod tokens;
 mod write;
+use template_export::build_template_export_nodes;
+use template_settings::{
+    ensure_routing_template_source_in_scope, load_clash_routing_template_for_profile,
+    normalize_routing_template_source_id, persist_profile_routing_template_source,
+    profile_routing_template_source_key, resolve_profile_routing_template_source,
+};
 
 pub(crate) use export::{
     get_profile_base64_handler, get_profile_clash_handler, get_profile_raw_handler,
@@ -43,10 +51,13 @@ fn load_profile_cache_entry(
     let source_repository = SourceRepository::new(state.database.as_ref());
     let cache_repository = NodeCacheRepository::new(state.database.as_ref());
 
-    let profile = profile_repository
+    let mut profile = profile_repository
         .get_by_id(profile_id)
         .map_err(storage_error_to_response)?
         .ok_or_else(|| not_found_error_response("Profile 不存在"))?;
+    profile.routing_template_source_id =
+        resolve_profile_routing_template_source(state.database.as_ref(), profile_id)
+            .map_err(storage_error_to_response)?;
     let source_ids = list_profile_source_ids(state.database.as_ref(), profile_id)
         .map_err(storage_error_to_response)?;
 
@@ -75,13 +86,25 @@ fn load_profile_cache_entry(
     } else {
         None
     };
+    let clash_routing_template = load_clash_routing_template_for_profile(
+        state.database.as_ref(),
+        profile.routing_template_source_id.as_deref(),
+    )
+    .map_err(storage_error_to_response)?;
+    let (nodes, routing_template_export_context) = build_template_export_nodes(
+        &source_nodes,
+        aggregation.nodes,
+        profile.routing_template_source_id.as_deref(),
+        clash_routing_template,
+    );
     let generated_at = current_timestamp_rfc3339().map_err(|_| internal_error_response())?;
     let entry = ProfileCacheEntry::with_cached_at(
         profile.clone(),
         source_ids,
-        aggregation.nodes,
+        nodes,
         generated_at,
         subscription_userinfo,
+        routing_template_export_context,
     );
 
     state.profile_cache.insert(&profile.id, entry.clone());
@@ -224,9 +247,12 @@ fn nibble_to_hex(value: u8) -> char {
 
 fn build_profile_dto(
     database: &app_storage::Database,
-    profile: Profile,
+    mut profile: Profile,
     source_ids: Vec<String>,
 ) -> Result<ProfileDto, (StatusCode, Json<ErrorResponse>)> {
+    profile.routing_template_source_id =
+        resolve_profile_routing_template_source(database, &profile.id)
+            .map_err(storage_error_to_response)?;
     let export_token_repository = ExportTokenRepository::new(database);
     let export_token = export_token_repository
         .get_active_token(&profile.id)

@@ -1,3 +1,6 @@
+use std::fs;
+
+use app_storage::SettingsRepository;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header::CONTENT_TYPE, header::HOST};
 use base64::Engine;
@@ -78,6 +81,29 @@ const SINGBOX_TEMPLATE_FIXTURE: &str = r#"
   }
 }
 "#;
+
+fn load_real_clash_template_fixture() -> Option<String> {
+    let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../sub.txt")
+        .canonicalize()
+        .ok()
+        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sub.txt"));
+    let Ok(bytes) = fs::read(&fixture_path) else {
+        eprintln!(
+            "跳过真实 Clash 模板 e2e：未找到本地文件 {}",
+            fixture_path.display()
+        );
+        return None;
+    };
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        let utf16 = bytes[2..]
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        return Some(String::from_utf16(&utf16).expect("sub.txt UTF-16 解码失败"));
+    }
+    Some(String::from_utf8(bytes).expect("sub.txt UTF-8 解码失败"))
+}
 
 #[tokio::test]
 async fn e2e_import_source_refresh_and_raw_profile_output() {
@@ -1073,6 +1099,182 @@ async fn e2e_profile_clash_template_source_applies_template_groups() {
 
     template_server_task.abort();
     nodes_server_task.abort();
+}
+
+#[tokio::test]
+async fn e2e_profile_real_clash_template_source_preserves_original_nodes() {
+    let Some(real_fixture) = load_real_clash_template_fixture() else {
+        return;
+    };
+    let state = build_test_state();
+    let app = build_router(state.clone());
+
+    let (template_upstream_base, template_server_task) =
+        start_fixture_server(real_fixture.trim().to_string(), "text/yaml; charset=utf-8").await;
+
+    let boundary = "----subforge-e2e-real-template-boundary";
+    let plugin_zip = build_builtin_plugin_zip_bytes();
+    let import_body = build_multipart_plugin_body(boundary, &plugin_zip, "builtin-static.zip");
+    let import_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/plugins/import")
+                .header(HOST, "127.0.0.1:18118")
+                .header("authorization", "Bearer test-admin-token")
+                .header(
+                    CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(import_body))
+                .expect("构建导入插件请求失败"),
+        )
+        .await
+        .expect("导入插件请求执行失败");
+    assert_eq!(import_response.status(), StatusCode::CREATED);
+
+    let source_response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::POST,
+            "/api/sources",
+            &json!({
+                "plugin_id": "subforge.builtin.static",
+                "name": "Real Clash Template Source",
+                "config": {
+                    "url": format!("{template_upstream_base}/sub")
+                }
+            }),
+        ))
+        .await
+        .expect("创建真实模板来源失败");
+    assert_eq!(source_response.status(), StatusCode::CREATED);
+    let source_payload = read_json(source_response).await;
+    let source_id = source_payload
+        .pointer("/source/source/id")
+        .and_then(Value::as_str)
+        .expect("真实模板来源缺少 id")
+        .to_string();
+
+    let refresh_response = app
+        .clone()
+        .oneshot(admin_request(
+            Method::POST,
+            &format!("/api/sources/{source_id}/refresh"),
+            Body::empty(),
+        ))
+        .await
+        .expect("刷新真实模板来源失败");
+    assert_eq!(refresh_response.status(), StatusCode::OK);
+
+    let settings_repository = SettingsRepository::new(state.database.as_ref());
+    assert!(
+        settings_repository
+            .get(&format!("source.{source_id}.clash_routing_template"))
+            .expect("读取真实模板缓存失败")
+            .is_some(),
+        "真实 Clash 母版刷新后应落库模板缓存"
+    );
+
+    let profile_response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::POST,
+            "/api/profiles",
+            &json!({
+                "name": "Real Clash Template Profile",
+                "source_ids": [source_id.clone()],
+                "routing_template_source_id": source_id.clone(),
+            }),
+        ))
+        .await
+        .expect("创建真实模板 Profile 失败");
+    assert_eq!(profile_response.status(), StatusCode::CREATED);
+    let profile_payload = read_json(profile_response).await;
+    let profile_id = profile_payload
+        .pointer("/profile/profile/id")
+        .and_then(Value::as_str)
+        .expect("真实模板 Profile 缺少 id")
+        .to_string();
+    let export_token = profile_payload
+        .pointer("/profile/export_token")
+        .and_then(Value::as_str)
+        .expect("真实模板 Profile 缺少 export_token")
+        .to_string();
+
+    let raw_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!(
+                    "/api/profiles/{profile_id}/raw?token={export_token}"
+                ))
+                .header(HOST, "127.0.0.1:18118")
+                .body(Body::empty())
+                .expect("构建真实模板 raw 请求失败"),
+        )
+        .await
+        .expect("读取真实模板 raw 失败");
+    assert_eq!(raw_response.status(), StatusCode::OK);
+    let raw_payload = read_json(raw_response).await;
+    let raw_nodes = raw_payload
+        .get("nodes")
+        .and_then(Value::as_array)
+        .expect("真实模板 raw 响应缺少 nodes");
+    let raw_node_names = raw_nodes
+        .iter()
+        .filter_map(|node| node.get("name").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    assert!(
+        raw_node_names.contains(&"发布页: v.yeshayun.com"),
+        "raw 输出必须保留母版原始节点"
+    );
+    assert!(
+        raw_node_names.contains(&"🇭🇰 香港 02"),
+        "raw 输出必须保留母版中与其它节点 dedupe key 冲突的原始节点名"
+    );
+
+    let clash_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!(
+                    "/api/profiles/{profile_id}/clash?token={export_token}"
+                ))
+                .header(HOST, "127.0.0.1:18118")
+                .body(Body::empty())
+                .expect("构建真实模板 clash 请求失败"),
+        )
+        .await
+        .expect("读取真实模板 clash 失败");
+    assert_eq!(clash_response.status(), StatusCode::OK);
+    let clash_bytes = to_bytes(clash_response.into_body(), 2 * 1024 * 1024)
+        .await
+        .expect("读取真实模板 clash 响应体失败");
+    let clash_text = String::from_utf8(clash_bytes.to_vec()).expect("clash 响应不是 UTF-8");
+    assert!(clash_text.contains("mixed-port: 7890"));
+    assert!(clash_text.contains("dns:"));
+    assert!(clash_text.contains("proxy-groups:"));
+    assert!(clash_text.contains("\nrules:"));
+    assert!(clash_text.contains("🚀 节点选择"));
+    assert!(clash_text.contains("自动选择"));
+    assert!(
+        clash_text.contains("发布页: v.yeshayun.com"),
+        "clash 输出必须保留母版原始节点实体"
+    );
+    assert!(
+        clash_text.contains("🇭🇰 香港 02"),
+        "clash 输出必须保留母版中 dedupe key 冲突的原始节点实体"
+    );
+    assert!(
+        !clash_text.contains("- name: Select"),
+        "真实模板导出不应回退到默认 Select/Auto 分组"
+    );
+
+    template_server_task.abort();
 }
 
 #[tokio::test]

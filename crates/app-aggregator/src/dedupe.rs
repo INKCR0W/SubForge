@@ -44,7 +44,7 @@ pub(crate) fn dedupe_nodes(sources: &[SourceNodes]) -> Vec<ProxyNode> {
     deduped
 }
 
-fn build_dedupe_key(node: &ProxyNode) -> String {
+pub fn build_dedupe_key(node: &ProxyNode) -> String {
     let credential = extract_credential(node);
     let transport_hash = build_transport_hash(node);
     format!(

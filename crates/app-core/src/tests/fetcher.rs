@@ -1,9 +1,33 @@
 use super::*;
+use std::fs;
 use std::io::Write;
 
 use brotli::CompressorWriter;
 use flate2::Compression;
 use flate2::write::GzEncoder;
+
+fn load_real_clash_template_fixture() -> Option<String> {
+    let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../sub.txt")
+        .canonicalize()
+        .ok()
+        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sub.txt"));
+    let Ok(bytes) = fs::read(&fixture_path) else {
+        eprintln!(
+            "跳过真实 Clash 模板回归：未找到本地文件 {}",
+            fixture_path.display()
+        );
+        return None;
+    };
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        let utf16 = bytes[2..]
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        return Some(String::from_utf16(&utf16).expect("sub.txt UTF-16 解码失败"));
+    }
+    Some(String::from_utf8(bytes).expect("sub.txt UTF-8 解码失败"))
+}
 
 #[derive(Clone)]
 struct CountingParser {
@@ -222,6 +246,53 @@ rules:
     assert_eq!(template.groups.len(), 2);
     assert_eq!(template.groups[0].name, "Proxy");
     assert_eq!(template.rules, vec!["MATCH,Proxy".to_string()]);
+    assert!(template.preserve_original_proxy_names);
+    assert!(
+        template
+            .base_config_yaml
+            .as_deref()
+            .is_some_and(|value| value.contains("mixed-port: 7890"))
+    );
+}
+
+#[test]
+fn static_fetcher_extracts_real_clash_routing_template_from_sub_txt() {
+    let Some(payload) = load_real_clash_template_fixture() else {
+        return;
+    };
+    let db = Database::open_in_memory().expect("内存数据库初始化失败");
+    let source_repository = SourceRepository::new(&db);
+    source_repository
+        .insert(&sample_source(
+            "source-fetch-real-template",
+            "subforge.builtin.static",
+        ))
+        .expect("写入来源实例失败");
+
+    let fetcher = StaticFetcher::new(&db).expect("初始化 StaticFetcher 失败");
+    let nodes = fetcher
+        .parse_and_cache_content("source-fetch-real-template", &payload)
+        .expect("真实 Clash 母版内容应可写入缓存");
+
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node.name == "发布页: v.yeshayun.com"),
+        "真实母版原始节点应被保留到 node_cache"
+    );
+
+    let repository = SettingsRepository::new(&db);
+    let setting = repository
+        .get("source.source-fetch-real-template.clash_routing_template")
+        .expect("读取模板设置失败")
+        .expect("真实 Clash 母版应写入模板缓存");
+    let template: app_common::ClashRoutingTemplate =
+        serde_json::from_str(&setting.value).expect("模板 JSON 反序列化失败");
+    assert!(
+        template.groups.len() >= 2,
+        "真实 Clash 母版至少应提取出多个 proxy-groups"
+    );
+    assert!(!template.rules.is_empty(), "真实 Clash 母版应提取出 rules");
     assert!(template.preserve_original_proxy_names);
     assert!(
         template

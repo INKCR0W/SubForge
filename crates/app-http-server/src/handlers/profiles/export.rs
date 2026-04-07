@@ -10,9 +10,9 @@ pub(crate) async fn get_profile_clash_handler(
     let _ = query.token.as_deref();
     let cache_entry = load_profile_cache_entry(&state, &id)?;
     let body = ClashTransformer::default()
-        .transform_with_template(
+        .transform_with_template_context(
             &cache_entry.nodes,
-            cache_entry.clash_routing_template.as_ref(),
+            cache_entry.routing_template_export_context.as_ref(),
         )
         .map_err(transform_error_to_response)?;
     let headers = build_subscription_headers(
@@ -32,9 +32,9 @@ pub(crate) async fn get_profile_singbox_handler(
     let _ = query.token.as_deref();
     let cache_entry = load_profile_cache_entry(&state, &id)?;
     let body = SingboxTransformer::default()
-        .transform_with_template(
+        .transform_with_template_context(
             &cache_entry.nodes,
-            cache_entry.clash_routing_template.as_ref(),
+            cache_entry.routing_template_export_context.as_ref(),
         )
         .map_err(transform_error_to_response)?;
     let headers = build_subscription_headers(

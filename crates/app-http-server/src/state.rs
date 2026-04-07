@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use app_common::{ErrorResponse, Profile, ProxyNode};
 use app_secrets::SecretStore;
 use app_storage::Database;
+use app_transform::RoutingTemplateExportContext;
 use axum::Json;
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -86,6 +87,7 @@ pub(crate) struct ProfileCacheEntry {
     pub(crate) nodes: Vec<ProxyNode>,
     pub(crate) generated_at: String,
     pub(crate) subscription_userinfo: Option<String>,
+    pub(crate) routing_template_export_context: Option<RoutingTemplateExportContext>,
     cached_at: Instant,
 }
 
@@ -96,6 +98,7 @@ impl ProfileCacheEntry {
         nodes: Vec<ProxyNode>,
         generated_at: String,
         subscription_userinfo: Option<String>,
+        routing_template_export_context: Option<RoutingTemplateExportContext>,
     ) -> Self {
         Self {
             profile,
@@ -103,6 +106,7 @@ impl ProfileCacheEntry {
             nodes,
             generated_at,
             subscription_userinfo,
+            routing_template_export_context,
             cached_at: Instant::now(),
         }
     }
