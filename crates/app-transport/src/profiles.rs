@@ -8,7 +8,7 @@ use crate::error::TransportResult;
 
 const STANDARD_TIMEOUT_SEC: u64 = 30;
 const STANDARD_MAX_REDIRECTS: usize = 10;
-const STANDARD_DEFAULT_USER_AGENT: &str = "SubForge/0.1.0 (standard)";
+const STANDARD_DEFAULT_USER_AGENT: &str = "clash.meta";
 const BROWSER_CHROME_TIMEOUT_SEC: u64 = 30;
 const BROWSER_CHROME_MAX_REDIRECTS: usize = 10;
 const BROWSER_CHROME_REQUEST_DELAY_MS: u64 = 500;

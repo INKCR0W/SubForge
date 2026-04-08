@@ -90,6 +90,13 @@ pub(super) fn load_clash_routing_template_for_profile(
     let Some(setting) = repository.get(&key)? else {
         return Ok(None);
     };
-    let parsed = serde_json::from_str::<ClashRoutingTemplate>(&setting.value).ok();
-    Ok(parsed)
+    match serde_json::from_str::<ClashRoutingTemplate>(&setting.value) {
+        Ok(parsed) => Ok(Some(parsed)),
+        Err(error) => {
+            eprintln!(
+                "WARN: 反序列化 ClashRoutingTemplate 失败，模板将被忽略 source_id={source_id} error={error}"
+            );
+            Ok(None)
+        }
+    }
 }

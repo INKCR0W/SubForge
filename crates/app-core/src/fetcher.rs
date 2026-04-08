@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use app_common::{AppSetting, ClashRoutingTemplate, ProxyNode};
-use app_storage::{Database, NodeCacheRepository, SettingsRepository};
+use app_common::ProxyNode;
+use app_storage::{Database, NodeCacheRepository};
 use app_transport::{NetworkProfileFactory, TransportProfile};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT};
 use reqwest::{Client as HttpClient, Url};
@@ -18,7 +18,7 @@ use content_decode::decode_response_body;
 pub(crate) use request_guard::{
     redact_headers_for_log, redact_url_for_log, sanitize_reqwest_error, validate_content_type,
 };
-use routing_template::{parse_routing_payload, source_routing_template_key};
+use routing_template::{parse_routing_payload, update_clash_routing_template};
 
 const MAX_SUBSCRIPTION_BYTES: usize = 10 * 1024 * 1024;
 const SUBSCRIPTION_USERINFO_HEADER: &str = "subscription-userinfo";
@@ -252,13 +252,15 @@ where
 
     fn parse_nodes(&self, source_instance_id: &str, payload: &str) -> CoreResult<Vec<ProxyNode>> {
         if let Some(parsed) = parse_routing_payload(source_instance_id, payload)? {
-            self.update_clash_routing_template(
+            update_clash_routing_template(
+                self.db,
                 source_instance_id,
                 parsed.routing_template.as_ref(),
             )?;
             return Ok(parsed.nodes);
         }
-        self.update_clash_routing_template(source_instance_id, None)?;
+        // 当前内容不是模板载荷时，清理旧模板缓存，避免来源改回 URI 列表后继续复用过期模板。
+        update_clash_routing_template(self.db, source_instance_id, None)?;
         self.parser.parse(source_instance_id, payload)
     }
 
@@ -311,45 +313,14 @@ where
 
         Ok(headers)
     }
-
-    fn update_clash_routing_template(
-        &self,
-        source_instance_id: &str,
-        template: Option<&ClashRoutingTemplate>,
-    ) -> CoreResult<()> {
-        let repository = SettingsRepository::new(self.db);
-        let key = source_routing_template_key(source_instance_id);
-        let now = now_rfc3339()?;
-
-        match template {
-            Some(template) => {
-                let value = serde_json::to_string(template).map_err(|error| {
-                    CoreError::ConfigInvalid(format!("序列化 Clash 分流模板失败：{error}"))
-                })?;
-                repository.set(&AppSetting {
-                    key,
-                    value,
-                    updated_at: now,
-                })?;
-            }
-            None => {
-                repository.delete(&key)?;
-            }
-        }
-
-        Ok(())
-    }
 }
 
 pub(crate) fn retry_backoff(
     base_delay: std::time::Duration,
     retry_attempt: usize,
 ) -> std::time::Duration {
-    let base_delay = if base_delay.is_zero() {
-        std::time::Duration::from_millis(100)
-    } else {
-        base_delay
-    };
     let shift = retry_attempt.saturating_sub(1).min(16);
-    base_delay.saturating_mul(1_u32 << shift)
+    base_delay
+        .max(std::time::Duration::from_millis(100))
+        .saturating_mul(1_u32 << shift)
 }

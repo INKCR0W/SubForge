@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::RoutingTemplateExportContext;
 use app_common::{
     ClashRoutingTemplate, ClashRoutingTemplateGroup, ProxyNode, ProxyProtocol, ProxyTransport,
     TlsConfig,
@@ -823,4 +824,105 @@ fn build_node(
         region: region.map(ToString::to_string),
         updated_at: "2026-04-03T00:00:00Z".to_string(),
     }
+}
+
+#[test]
+fn clash_template_context_roundtrip_keeps_template_groups_and_rules() {
+    let original_template = ClashRoutingTemplate {
+        base_config_yaml: None,
+        groups: vec![
+            ClashRoutingTemplateGroup {
+                name: "Proxy".to_string(),
+                group_type: "select".to_string(),
+                proxies: vec!["Auto".to_string(), "DIRECT".to_string()],
+                url: None,
+                interval: None,
+                tolerance: None,
+                include_all: false,
+                use_provider: false,
+                filter: None,
+                exclude_filter: None,
+            },
+            ClashRoutingTemplateGroup {
+                name: "Auto".to_string(),
+                group_type: "url-test".to_string(),
+                proxies: vec![],
+                url: Some("http://www.gstatic.com/generate_204".to_string()),
+                interval: Some(300),
+                tolerance: None,
+                include_all: false,
+                use_provider: false,
+                filter: None,
+                exclude_filter: None,
+            },
+        ],
+        rules: vec![
+            "DOMAIN,example.com,Proxy".to_string(),
+            "MATCH,Proxy".to_string(),
+        ],
+        preserve_original_proxy_names: true,
+    };
+
+    let json_stored =
+        serde_json::to_string(&original_template).expect("序列化 ClashRoutingTemplate 不应失败");
+    let loaded_template = serde_json::from_str::<ClashRoutingTemplate>(&json_stored)
+        .expect("反序列化 ClashRoutingTemplate 不应失败");
+
+    assert_eq!(
+        loaded_template, original_template,
+        "模板上下文在 JSON 往返后应保持一致"
+    );
+
+    let nodes = vec![build_node(
+        "HK-01",
+        ProxyProtocol::Ss,
+        ProxyTransport::Tcp,
+        Some("hk"),
+        vec![
+            ("cipher", Value::String("aes-128-gcm".to_string())),
+            ("password", Value::String("p@ss".to_string())),
+        ],
+    )];
+
+    let template_context = RoutingTemplateExportContext::new(loaded_template, nodes.clone());
+    let transformer = ClashTransformer::default();
+    let yaml = transformer
+        .transform_with_template_context(&nodes, Some(&template_context))
+        .expect("transform_with_template_context 不应失败");
+
+    let value: Value = serde_yaml::from_str(&yaml).expect("输出 YAML 解析失败");
+    let groups = value
+        .get("proxy-groups")
+        .and_then(Value::as_array)
+        .expect("输出应包含 proxy-groups");
+
+    let group_names: Vec<&str> = groups
+        .iter()
+        .filter_map(|g| g.get("name").and_then(Value::as_str))
+        .collect();
+
+    assert!(
+        group_names.contains(&"Proxy"),
+        "输出应包含模板分组 'Proxy'，实际分组: {group_names:?}"
+    );
+    assert!(
+        group_names.contains(&"Auto"),
+        "输出应包含模板分组 'Auto'，实际分组: {group_names:?}"
+    );
+
+    let rules = value
+        .get("rules")
+        .and_then(Value::as_array)
+        .expect("输出应包含 rules（模板模式下）");
+
+    let rule_strs: Vec<&str> = rules.iter().filter_map(Value::as_str).collect();
+
+    assert!(
+        rule_strs.contains(&"DOMAIN,example.com,Proxy"),
+        "输出应包含模板 rule 'DOMAIN,example.com,Proxy'，实际 rules: {rule_strs:?}"
+    );
+    assert!(
+        rule_strs.contains(&"MATCH,Proxy"),
+        "输出应包含模板 rule 'MATCH,Proxy'，实际 rules: {rule_strs:?}"
+    );
 }

@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 #[test]
 fn create_source_routes_secret_fields_to_secret_store() {
@@ -79,6 +79,45 @@ fn source_config_validation_error_returns_e_config_invalid() {
 
     assert!(matches!(error, CoreError::ConfigInvalid(_)));
     assert_eq!(error.code(), "E_CONFIG_INVALID");
+    cleanup_dir(&temp_root);
+}
+
+#[test]
+fn builtin_static_source_defaults_user_agent_to_clash_meta() {
+    let db = Database::open_in_memory().expect("内存数据库初始化失败");
+    let temp_root = create_temp_dir("source-default-user-agent");
+    let plugins_dir = temp_root.join("plugins");
+    let install_service = PluginInstallService::new(&db, &plugins_dir);
+    install_service
+        .install_from_dir(builtins_static_plugin_dir())
+        .expect("安装内置插件应成功");
+
+    let secret_store = MemorySecretStore::new();
+    let source_service = SourceService::new(&db, &plugins_dir, &secret_store);
+    let mut config = BTreeMap::new();
+    config.insert(
+        "url".to_string(),
+        json!("https://example.com/subscription.txt"),
+    );
+
+    let created = source_service
+        .create_source("subforge.builtin.static", "Builtin Source", config)
+        .expect("创建内置静态来源应成功");
+
+    assert_eq!(
+        created.config.get("user_agent"),
+        Some(&Value::String("clash.meta".to_string()))
+    );
+
+    let fetched = source_service
+        .get_source(&created.source.id)
+        .expect("读取来源应成功")
+        .expect("来源应存在");
+    assert_eq!(
+        fetched.config.get("user_agent"),
+        Some(&Value::String("clash.meta".to_string()))
+    );
+
     cleanup_dir(&temp_root);
 }
 

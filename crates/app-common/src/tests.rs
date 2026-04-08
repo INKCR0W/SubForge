@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    AppError, AppSetting, ConfigSchema, Plugin, PluginManifest, PluginType, Profile, ProfileSource,
-    ProxyNode, ProxyProtocol, ProxyTransport, RoutingTemplateGroupIr, RoutingTemplateIr,
-    RoutingTemplateSourceKernel, SourceInstance, TlsConfig,
+    AppError, AppSetting, ClashRoutingTemplate, ClashRoutingTemplateGroup, ConfigSchema, Plugin,
+    PluginManifest, PluginType, Profile, ProfileSource, ProxyNode, ProxyProtocol, ProxyTransport,
+    RoutingTemplateGroupIr, RoutingTemplateIr, RoutingTemplateSourceKernel, SourceInstance,
+    TlsConfig,
 };
 
 #[test]
@@ -178,4 +179,102 @@ fn routing_template_ir_can_convert_to_clash_template() {
     assert_eq!(template.rules, vec!["MATCH,Proxy".to_string()]);
     assert!(template.preserve_original_proxy_names);
     assert!(template.base_config_yaml.is_none());
+}
+
+#[test]
+fn clash_routing_template_roundtrips_with_groups_and_rules() {
+    let original = ClashRoutingTemplate {
+        base_config_yaml: Some("mixed-port: 7890\nmode: rule\n".to_string()),
+        groups: vec![
+            ClashRoutingTemplateGroup {
+                name: "Proxy".to_string(),
+                group_type: "select".to_string(),
+                proxies: vec!["Auto".to_string(), "DIRECT".to_string()],
+                url: None,
+                interval: None,
+                tolerance: None,
+                include_all: false,
+                use_provider: false,
+                filter: None,
+                exclude_filter: None,
+            },
+            ClashRoutingTemplateGroup {
+                name: "Auto".to_string(),
+                group_type: "url-test".to_string(),
+                proxies: vec!["node-hk-01".to_string()],
+                url: Some("http://www.gstatic.com/generate_204".to_string()),
+                interval: Some(300),
+                tolerance: Some(50),
+                include_all: false,
+                use_provider: false,
+                filter: None,
+                exclude_filter: None,
+            },
+        ],
+        rules: vec![
+            "DOMAIN,example.com,Proxy".to_string(),
+            "MATCH,Proxy".to_string(),
+        ],
+        preserve_original_proxy_names: true,
+    };
+
+    let json = serde_json::to_string(&original).expect("序列化不应失败");
+    let deserialized =
+        serde_json::from_str::<ClashRoutingTemplate>(&json).expect("反序列化不应失败");
+    assert_eq!(
+        deserialized, original,
+        "ClashRoutingTemplate 往返后应保持一致"
+    );
+}
+
+#[test]
+fn clash_routing_template_roundtrips_when_groups_are_empty() {
+    let original = ClashRoutingTemplate {
+        base_config_yaml: None,
+        groups: vec![],
+        rules: vec![],
+        preserve_original_proxy_names: false,
+    };
+
+    let json = serde_json::to_string(&original).expect("序列化不应失败");
+    let deserialized = serde_json::from_str::<ClashRoutingTemplate>(&json)
+        .expect("空 groups 的模板反序列化不应失败");
+
+    assert_eq!(deserialized, original, "空 groups 模板往返不一致");
+}
+
+#[test]
+fn clash_routing_template_defaults_preserve_flag_to_false_when_omitted() {
+    let original = ClashRoutingTemplate {
+        base_config_yaml: None,
+        groups: vec![ClashRoutingTemplateGroup {
+            name: "Select".to_string(),
+            group_type: "select".to_string(),
+            proxies: vec!["DIRECT".to_string()],
+            url: None,
+            interval: None,
+            tolerance: None,
+            include_all: false,
+            use_provider: false,
+            filter: None,
+            exclude_filter: None,
+        }],
+        rules: vec!["MATCH,Select".to_string()],
+        preserve_original_proxy_names: false,
+    };
+
+    let json = serde_json::to_string(&original).expect("序列化不应失败");
+    assert!(
+        !json.contains("preserve_original_proxy_names"),
+        "preserve_original_proxy_names=false 时不应出现在 JSON 中，实际 JSON: {json}"
+    );
+
+    let deserialized =
+        serde_json::from_str::<ClashRoutingTemplate>(&json).expect("反序列化不应失败");
+
+    assert_eq!(
+        deserialized.preserve_original_proxy_names, false,
+        "省略字段反序列化后应默认为 false"
+    );
+    assert_eq!(deserialized, original, "往返不一致");
 }

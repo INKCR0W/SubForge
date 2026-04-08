@@ -1,7 +1,8 @@
 use app_common::{
-    ClashRoutingTemplate, ProxyNode, RoutingTemplateGroupIr, RoutingTemplateIr,
+    AppSetting, ClashRoutingTemplate, ProxyNode, RoutingTemplateGroupIr, RoutingTemplateIr,
     RoutingTemplateSourceKernel,
 };
+use app_storage::{Database, SettingsRepository};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use serde_yaml::Value as YamlValue;
 
@@ -11,7 +12,8 @@ mod clash_payload;
 mod singbox_payload;
 #[path = "routing_template_utils.rs"]
 mod utils;
-use crate::CoreResult;
+use crate::utils::now_rfc3339;
+use crate::{CoreError, CoreResult};
 use clash_payload::parse_clash_payload;
 use singbox_payload::parse_singbox_payload;
 use utils::{
@@ -25,8 +27,32 @@ pub(super) struct ParsedRoutingPayload {
     pub(super) routing_template: Option<ClashRoutingTemplate>,
 }
 
-pub(super) fn source_routing_template_key(source_instance_id: &str) -> String {
-    format!("source.{source_instance_id}.clash_routing_template")
+pub(super) fn update_clash_routing_template(
+    db: &Database,
+    source_instance_id: &str,
+    template: Option<&ClashRoutingTemplate>,
+) -> CoreResult<()> {
+    let repository = SettingsRepository::new(db);
+    let key = format!("source.{source_instance_id}.clash_routing_template");
+    let now = now_rfc3339()?;
+
+    match template {
+        Some(template) => {
+            let value = serde_json::to_string(template).map_err(|error| {
+                CoreError::ConfigInvalid(format!("序列化 Clash 分流模板失败：{error}"))
+            })?;
+            repository.set(&AppSetting {
+                key,
+                value,
+                updated_at: now,
+            })?;
+        }
+        None => {
+            repository.delete(&key)?;
+        }
+    }
+
+    Ok(())
 }
 
 pub(super) fn parse_routing_payload(
@@ -304,21 +330,18 @@ fn parse_singbox_rules(route: Option<&JsonValue>) -> Vec<String> {
 }
 
 fn resolve_singbox_rule_target(rule: &JsonMap<String, JsonValue>) -> Option<String> {
-    if let Some(target) = rule
-        .get("outbound")
+    rule.get("outbound")
         .and_then(JsonValue::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-    {
-        return Some(target.to_string());
-    }
-
-    let first = rule
-        .get("outbounds")
-        .and_then(JsonValue::as_array)
-        .and_then(|items| items.first())
-        .and_then(JsonValue::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())?;
-    Some(first.to_string())
+        .map(ToString::to_string)
+        .or_else(|| {
+            rule.get("outbounds")
+                .and_then(JsonValue::as_array)
+                .and_then(|items| items.first())
+                .and_then(JsonValue::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        })
 }

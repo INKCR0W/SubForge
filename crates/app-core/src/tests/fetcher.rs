@@ -1,33 +1,9 @@
 use super::*;
-use std::fs;
 use std::io::Write;
 
 use brotli::CompressorWriter;
 use flate2::Compression;
 use flate2::write::GzEncoder;
-
-fn load_real_clash_template_fixture() -> Option<String> {
-    let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../sub.txt")
-        .canonicalize()
-        .ok()
-        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sub.txt"));
-    let Ok(bytes) = fs::read(&fixture_path) else {
-        eprintln!(
-            "跳过真实 Clash 模板回归：未找到本地文件 {}",
-            fixture_path.display()
-        );
-        return None;
-    };
-    if bytes.starts_with(&[0xFF, 0xFE]) {
-        let utf16 = bytes[2..]
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-            .collect::<Vec<_>>();
-        return Some(String::from_utf16(&utf16).expect("sub.txt UTF-16 解码失败"));
-    }
-    Some(String::from_utf8(bytes).expect("sub.txt UTF-8 解码失败"))
-}
 
 #[derive(Clone)]
 struct CountingParser {
@@ -98,6 +74,60 @@ async fn static_fetcher_rejects_unsupported_content_type() {
         .await
         .expect_err("非法 Content-Type 应被拒绝");
     assert!(matches!(error, CoreError::SubscriptionFetch(_)));
+
+    server_task.abort();
+}
+
+#[tokio::test]
+async fn static_fetcher_standard_profile_uses_clash_meta_user_agent() {
+    let db = Database::open_in_memory().expect("内存数据库初始化失败");
+    let source_repository = SourceRepository::new(&db);
+    source_repository
+        .insert(&sample_source(
+            "source-fetch-standard-ua",
+            "subforge.builtin.static",
+        ))
+        .expect("写入来源实例失败");
+
+    let payload = r#"
+proxies:
+  - name: ua-template-node
+    type: ss
+    server: ss-a.example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: p@ss
+proxy-groups:
+  - name: Proxy
+    type: select
+    proxies:
+      - ua-template-node
+rules:
+  - MATCH,Proxy
+"#;
+    let (url, ua_hits, server_task) =
+        start_standard_user_agent_gate_server("/sub", payload.to_string()).await;
+
+    let fetcher = StaticFetcher::new(&db).expect("初始化 StaticFetcher 失败");
+    let nodes = fetcher
+        .fetch_and_cache("source-fetch-standard-ua", &format!("{url}/sub"), None)
+        .await
+        .expect("standard 档位应携带 clash.meta User-Agent 成功拉取");
+
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].name, "ua-template-node");
+    assert_eq!(ua_hits.load(Ordering::SeqCst), 1);
+
+    let repository = SettingsRepository::new(&db);
+    let setting = repository
+        .get("source.source-fetch-standard-ua.clash_routing_template")
+        .expect("读取模板设置失败")
+        .expect("应保存 Clash 分流模板");
+    let template: app_common::ClashRoutingTemplate =
+        serde_json::from_str(&setting.value).expect("模板 JSON 反序列化失败");
+    assert_eq!(template.groups.len(), 1);
+    assert_eq!(template.groups[0].name, "Proxy");
+    assert_eq!(template.rules, vec!["MATCH,Proxy".to_string()]);
 
     server_task.abort();
 }
@@ -246,53 +276,6 @@ rules:
     assert_eq!(template.groups.len(), 2);
     assert_eq!(template.groups[0].name, "Proxy");
     assert_eq!(template.rules, vec!["MATCH,Proxy".to_string()]);
-    assert!(template.preserve_original_proxy_names);
-    assert!(
-        template
-            .base_config_yaml
-            .as_deref()
-            .is_some_and(|value| value.contains("mixed-port: 7890"))
-    );
-}
-
-#[test]
-fn static_fetcher_extracts_real_clash_routing_template_from_sub_txt() {
-    let Some(payload) = load_real_clash_template_fixture() else {
-        return;
-    };
-    let db = Database::open_in_memory().expect("内存数据库初始化失败");
-    let source_repository = SourceRepository::new(&db);
-    source_repository
-        .insert(&sample_source(
-            "source-fetch-real-template",
-            "subforge.builtin.static",
-        ))
-        .expect("写入来源实例失败");
-
-    let fetcher = StaticFetcher::new(&db).expect("初始化 StaticFetcher 失败");
-    let nodes = fetcher
-        .parse_and_cache_content("source-fetch-real-template", &payload)
-        .expect("真实 Clash 母版内容应可写入缓存");
-
-    assert!(
-        nodes
-            .iter()
-            .any(|node| node.name == "发布页: v.yeshayun.com"),
-        "真实母版原始节点应被保留到 node_cache"
-    );
-
-    let repository = SettingsRepository::new(&db);
-    let setting = repository
-        .get("source.source-fetch-real-template.clash_routing_template")
-        .expect("读取模板设置失败")
-        .expect("真实 Clash 母版应写入模板缓存");
-    let template: app_common::ClashRoutingTemplate =
-        serde_json::from_str(&setting.value).expect("模板 JSON 反序列化失败");
-    assert!(
-        template.groups.len() >= 2,
-        "真实 Clash 母版至少应提取出多个 proxy-groups"
-    );
-    assert!(!template.rules.is_empty(), "真实 Clash 母版应提取出 rules");
     assert!(template.preserve_original_proxy_names);
     assert!(
         template
@@ -586,4 +569,58 @@ fn brotli_encode(payload: &[u8]) -> Vec<u8> {
         encoder.write_all(payload).expect("写入 br 压缩流失败");
     }
     output
+}
+
+async fn start_standard_user_agent_gate_server(
+    route_path: &'static str,
+    success_body: String,
+) -> (String, Arc<AtomicUsize>, JoinHandle<()>) {
+    let ua_hits = Arc::new(AtomicUsize::new(0));
+    let app = Router::new().route(
+        route_path,
+        get({
+            let ua_hits = ua_hits.clone();
+            move |headers: AxumHeaderMap| {
+                let success_body = success_body.clone();
+                let ua_hits = ua_hits.clone();
+                async move {
+                    let has_expected_user_agent = headers
+                        .get(axum::http::header::USER_AGENT)
+                        .and_then(|value| value.to_str().ok())
+                        .is_some_and(|value| value == "clash.meta");
+                    if has_expected_user_agent {
+                        ua_hits.fetch_add(1, Ordering::SeqCst);
+                        (
+                            StatusCode::OK,
+                            [(axum::http::header::CONTENT_TYPE, "text/yaml; charset=utf-8")],
+                            success_body,
+                        )
+                    } else {
+                        (
+                            StatusCode::FORBIDDEN,
+                            [(
+                                axum::http::header::CONTENT_TYPE,
+                                "text/plain; charset=utf-8",
+                            )],
+                            "unexpected user agent".to_string(),
+                        )
+                    }
+                }
+            }
+        }),
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("启动测试 HTTP 服务失败");
+    let address: SocketAddr = listener.local_addr().expect("读取监听地址失败");
+    let base_url = format!("http://{}", address);
+
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("测试 HTTP 服务运行失败");
+    });
+
+    (base_url, ua_hits, task)
 }

@@ -28,6 +28,12 @@ fn standard_profile_builds_https_request() {
 }
 
 #[test]
+fn standard_profile_uses_clash_meta_user_agent() {
+    let profile = StandardProfile::default();
+    assert_eq!(profile.default_user_agent(), "clash.meta");
+}
+
+#[test]
 fn browser_chrome_profile_exposes_chrome_headers_and_retry_policy() {
     let profile = BrowserChromeProfile::default();
     let headers = profile.default_headers();
