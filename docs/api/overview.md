@@ -1,4 +1,4 @@
-﻿# HTTP API 总览
+# HTTP API 总览
 
 ## 健康检查
 
@@ -14,8 +14,7 @@
 - `GET /api/logs`
 - `GET /api/plugins`
 - `POST /api/plugins/import`
-- `DELETE /api/plugins/{id}`
-- `PUT /api/plugins/{id}/toggle`
+- `DELETE /api/plugins/{id}` (内置插件禁止删除)
 - `GET /api/plugins/{id}/schema`
 - `GET /api/sources`
 - `POST /api/sources`

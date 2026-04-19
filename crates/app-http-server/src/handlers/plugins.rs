@@ -52,6 +52,22 @@ pub(crate) async fn import_plugin_handler(
     extract_zip_to_dir(&payload, temp_dir.path())?;
     let plugin_root_dir = resolve_plugin_root_dir(temp_dir.path())?;
 
+    let manifest_path = plugin_root_dir.join("plugin.json");
+    let manifest_content = fs::read_to_string(&manifest_path).map_err(|_| internal_error_response())?;
+    let manifest: serde_json::Value =
+        serde_json::from_str(&manifest_content).map_err(|_| config_error_response("plugin.json 解析失败"))?;
+    let import_plugin_id = manifest["plugin_id"]
+        .as_str()
+        .ok_or_else(|| config_error_response("plugin.json 缺少 plugin_id"))?;
+    if import_plugin_id.starts_with("subforge.builtin.") {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            "E_PLUGIN_BUILTIN_FORBIDDEN",
+            "禁止导入内置插件",
+            false,
+        ));
+    }
+
     let service = PluginInstallService::new(state.database.as_ref(), &state.plugins_dir);
     let installed = service
         .install_from_dir(&plugin_root_dir)
@@ -79,6 +95,15 @@ pub(crate) async fn delete_plugin_handler(
     let plugin = load_plugin_by_route_id(&repository, &id)
         .map_err(storage_error_to_response)?
         .ok_or_else(|| not_found_error_response("插件不存在"))?;
+
+    if plugin.plugin_id.starts_with("subforge.builtin.") {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            "E_PLUGIN_BUILTIN_FORBIDDEN",
+            "内置插件禁止删除",
+            false,
+        ));
+    }
 
     let source_repository = SourceRepository::new(state.database.as_ref());
     let attached_sources = source_repository
@@ -108,45 +133,6 @@ pub(crate) async fn delete_plugin_handler(
         None,
     );
     Ok((StatusCode::OK, Json(plugin)))
-}
-
-pub(crate) async fn toggle_plugin_handler(
-    State(state): State<ServerContext>,
-    AxumPath(id): AxumPath<String>,
-    Json(payload): Json<TogglePluginRequest>,
-) -> ApiResult<Plugin> {
-    let repository = PluginRepository::new(state.database.as_ref());
-    let plugin = load_plugin_by_route_id(&repository, &id)
-        .map_err(storage_error_to_response)?
-        .ok_or_else(|| not_found_error_response("插件不存在"))?;
-
-    let target_status = if payload.enabled {
-        "enabled"
-    } else {
-        "disabled"
-    };
-
-    if plugin.status != target_status {
-        let updated_at = current_timestamp_rfc3339().map_err(|_| internal_error_response())?;
-        repository
-            .update_status(&plugin.id, target_status, &updated_at)
-            .map_err(storage_error_to_response)?;
-    }
-
-    let updated = repository
-        .get_by_id(&plugin.id)
-        .map_err(storage_error_to_response)?
-        .ok_or_else(internal_error_response)?;
-
-    let action = if payload.enabled { "启用" } else { "禁用" };
-    emit_event(
-        &state,
-        "plugin:toggled",
-        format!("插件已{action}：{}", updated.plugin_id),
-        None,
-    );
-
-    Ok((StatusCode::OK, Json(updated)))
 }
 
 pub(crate) async fn get_plugin_schema_handler(

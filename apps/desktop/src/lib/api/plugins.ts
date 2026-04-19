@@ -94,13 +94,6 @@ export async function fetchPluginSchema(
   };
 }
 
-export async function togglePlugin(
-  pluginId: string,
-  enabled: boolean,
-): Promise<PluginRecord> {
-  return requestJson<PluginRecord>("PUT", `/api/plugins/${pluginId}/toggle`, { enabled });
-}
-
 export async function deletePlugin(pluginId: string): Promise<PluginRecord> {
   return requestJson<PluginRecord>("DELETE", `/api/plugins/${pluginId}`);
 }

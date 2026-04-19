@@ -8,7 +8,6 @@ type PluginListCardProps = {
   expandedPluginId: string | null;
   activePluginId: string | null;
   onToggleExpanded: (pluginId: string) => void;
-  onToggleStatus: (plugin: PluginRecord) => void;
   onDelete: (plugin: PluginRecord) => void;
 };
 
@@ -18,7 +17,6 @@ export function PluginListCard({
   expandedPluginId,
   activePluginId,
   onToggleExpanded,
-  onToggleStatus,
   onDelete,
 }: PluginListCardProps) {
   return (
@@ -26,7 +24,7 @@ export function PluginListCard({
       <div className="ui-card-header">
         <div>
           <h3 className="ui-card-title">插件列表</h3>
-          <p className="ui-card-desc">查看版本与状态，并执行启用、禁用、删除等管理动作。</p>
+          <p className="ui-card-desc">查看版本与状态，并执行删除等管理动作。</p>
         </div>
       </div>
 
@@ -70,14 +68,6 @@ export function PluginListCard({
                         onClick={() => onToggleExpanded(plugin.id)}
                       >
                         {expanded ? "收起详情" : "查看详情"}
-                      </button>
-                      <button
-                        type="button"
-                        className="ui-btn ui-btn-secondary ui-focus"
-                        disabled={busy}
-                        onClick={() => onToggleStatus(plugin)}
-                      >
-                        {busy ? "处理中..." : plugin.status === "enabled" ? "禁用" : "启用"}
                       </button>
                       <button
                         type="button"

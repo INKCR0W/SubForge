@@ -341,7 +341,7 @@ jobs:
             "subforge-core-$target"
           }
           Copy-Item -LiteralPath $sourceBinary -Destination (Join-Path $destDir $destName) -Force
-      - name: Build desktop bundle (Windows NSIS)
+- name: Build desktop bundle (Windows NSIS)
         if: runner.os == 'Windows'
         run: pnpm -C apps/desktop tauri build --ci --bundles nsis --target ${{ matrix.target }}
       - name: Build desktop bundle (macOS DMG)
@@ -350,6 +350,17 @@ jobs:
       - name: Build desktop bundle (Linux DEB/AppImage)
         if: runner.os == 'Linux'
         run: pnpm -C apps/desktop tauri build --ci --bundles deb,appimage --target ${{ matrix.target }}
+      - name: Copy builtin plugins to bundle
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            PLUGIN_RESOURCES_DIR="target/${{ matrix.target }}/release/bundle/nsis/resources"
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            PLUGIN_RESOURCES_DIR="target/${{ matrix.target }}/release/bundle/dmg/SubForge.app/Contents/Resources"
+          else
+            PLUGIN_RESOURCES_DIR="target/${{ matrix.target }}/release/bundle/appimage/resources"
+          fi
+          mkdir -p "$PLUGIN_RESOURCES_DIR/plugins"
+          cp -r plugins/builtins/* "$PLUGIN_RESOURCES_DIR/plugins/"
       - name: Upload NSIS bundle
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4

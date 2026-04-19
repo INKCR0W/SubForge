@@ -46,7 +46,6 @@ pub(crate) use health::health_handler;
 pub(crate) use logs::list_logs_handler;
 pub(crate) use plugins::{
     delete_plugin_handler, get_plugin_schema_handler, import_plugin_handler, list_plugins_handler,
-    toggle_plugin_handler,
 };
 pub(crate) use profiles::{
     create_profile_handler, delete_profile_handler, get_profile_base64_handler,
@@ -93,11 +92,6 @@ pub(crate) struct UpdateSettingsRequest {
 #[derive(Debug, Serialize)]
 pub(crate) struct PluginListResponse {
     pub(crate) plugins: Vec<Plugin>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct TogglePluginRequest {
-    pub(crate) enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

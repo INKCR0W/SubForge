@@ -415,12 +415,9 @@ fn apply_desktop_secret_backend_args(command: &mut Command) {
         }
     }
 
-    if cfg!(debug_assertions) {
-        // dev 环境默认使用 file 后端，规避部分系统 keyring 写入后无法回读的问题。
-        command
-            .arg("--secrets-backend")
-            .arg("file")
-            .arg("--secret-key")
-            .arg("subforge-desktop-dev-secret-key");
-    }
+    command
+        .arg("--secrets-backend")
+        .arg("file")
+        .arg("--secret-key")
+        .arg("subforge-desktop-secret-key");
 }

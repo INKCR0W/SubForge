@@ -4,7 +4,6 @@ import {
   deletePlugin,
   fetchPlugins,
   importPluginZip,
-  togglePlugin,
 } from "../../lib/api";
 import { queryKeys } from "../../lib/query-keys";
 import { useCoreUiStore } from "../../stores/core-ui-store";
@@ -59,32 +58,7 @@ export default function PluginsPage() {
     },
   });
 
-  const toggleMutation = useMutation({
-    mutationFn: (variables: { pluginId: string; enabled: boolean }) =>
-      togglePlugin(variables.pluginId, variables.enabled),
-    onSuccess: (plugin) => {
-      addToast({
-        title: plugin.status === "enabled" ? "插件已启用" : "插件已禁用",
-        description: `${plugin.name} (${plugin.plugin_id})`,
-        variant: "default",
-      });
-      if (!eventStreamActive) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.plugins.all });
-      }
-    },
-    onError: (error) => {
-      addToast({
-        title: "更新插件状态失败",
-        description: error instanceof Error ? error.message : "未知错误",
-        variant: "error",
-      });
-    },
-    onSettled: () => {
-      setActivePluginId(null);
-    },
-  });
-
-  const deleteMutation = useMutation({
+const deleteMutation = useMutation({
     mutationFn: (pluginId: string) => deletePlugin(pluginId),
     onSuccess: (plugin) => {
       addToast({
@@ -116,14 +90,6 @@ export default function PluginsPage() {
       return;
     }
     importMutation.mutate(file);
-  };
-
-  const handleToggle = (plugin: PluginRecord) => {
-    setActivePluginId(plugin.id);
-    toggleMutation.mutate({
-      pluginId: plugin.id,
-      enabled: plugin.status !== "enabled",
-    });
   };
 
   const handleDelete = (plugin: PluginRecord) => {
@@ -174,7 +140,7 @@ export default function PluginsPage() {
         onImportFile={handleImportFile}
       />
 
-      <PluginListCard
+<PluginListCard
         loading={pluginsQuery.isLoading}
         plugins={plugins}
         expandedPluginId={expandedPluginId}
@@ -182,7 +148,6 @@ export default function PluginsPage() {
         onToggleExpanded={(pluginId) =>
           setExpandedPluginId((current) => (current === pluginId ? null : pluginId))
         }
-        onToggleStatus={handleToggle}
         onDelete={handleDelete}
       />
     </section>
