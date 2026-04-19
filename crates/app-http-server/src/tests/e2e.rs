@@ -145,7 +145,7 @@ async fn e2e_import_source_refresh_and_raw_profile_output() {
         .clone()
         .oneshot(admin_request(
             Method::GET,
-            "/api/plugins/subforge.builtin.static/schema",
+            "/api/plugins/test.plugin.import-stub/schema",
             Body::empty(),
         ))
         .await
@@ -156,7 +156,7 @@ async fn e2e_import_source_refresh_and_raw_profile_output() {
         plugin_schema_payload
             .get("plugin_id")
             .and_then(Value::as_str),
-        Some("subforge.builtin.static")
+        Some("test.plugin.import-stub")
     );
     assert_eq!(
         plugin_schema_payload
@@ -171,7 +171,7 @@ async fn e2e_import_source_refresh_and_raw_profile_output() {
             Method::POST,
             "/api/sources",
             &json!({
-                "plugin_id": "subforge.builtin.static",
+                "plugin_id": "test.plugin.import-stub",
                 "name": "E2E Source",
                 "config": {
                     "url": format!("{upstream_base}/sub")
@@ -670,7 +670,7 @@ async fn e2e_import_source_refresh_and_raw_profile_output() {
             Method::POST,
             "/api/sources",
             &json!({
-                "plugin_id": "subforge.builtin.static",
+                "plugin_id": "test.plugin.import-stub",
                 "name": "E2E Source B",
                 "config": {
                     "url": format!("{upstream_base}/sub")
@@ -809,7 +809,7 @@ async fn e2e_profile_clash_template_source_applies_template_groups() {
             Method::POST,
             "/api/sources",
             &json!({
-                "plugin_id": "subforge.builtin.static",
+                "plugin_id": "test.plugin.import-stub",
                 "name": "Template Source",
                 "config": {
                     "url": format!("{template_upstream_base}/sub")
@@ -832,7 +832,7 @@ async fn e2e_profile_clash_template_source_applies_template_groups() {
             Method::POST,
             "/api/sources",
             &json!({
-                "plugin_id": "subforge.builtin.static",
+                "plugin_id": "test.plugin.import-stub",
                 "name": "Nodes Source",
                 "config": {
                     "url": format!("{nodes_upstream_base}/sub")
@@ -1135,7 +1135,7 @@ async fn e2e_profile_update_rejects_invalid_template_source_without_partial_writ
             Method::POST,
             "/api/sources",
             &json!({
-                "plugin_id": "subforge.builtin.static",
+                "plugin_id": "test.plugin.import-stub",
                 "name": "Template Source",
                 "config": {
                     "url": "https://example.com/template-sub"
@@ -1158,7 +1158,7 @@ async fn e2e_profile_update_rejects_invalid_template_source_without_partial_writ
             Method::POST,
             "/api/sources",
             &json!({
-                "plugin_id": "subforge.builtin.static",
+                "plugin_id": "test.plugin.import-stub",
                 "name": "Nodes Source",
                 "config": {
                     "url": "https://example.com/nodes-sub"
@@ -1264,7 +1264,7 @@ async fn e2e_profile_real_clash_template_source_preserves_original_nodes() {
             Method::POST,
             "/api/sources",
             &json!({
-                "plugin_id": "subforge.builtin.static",
+                "plugin_id": "test.plugin.import-stub",
                 "name": "Real Clash Template Source",
                 "config": {
                     "url": format!("{template_upstream_base}/sub")
@@ -1445,7 +1445,7 @@ async fn e2e_profile_singbox_template_source_converts_to_clash_groups_and_rules(
             Method::POST,
             "/api/sources",
             &json!({
-                "plugin_id": "subforge.builtin.static",
+                "plugin_id": "test.plugin.import-stub",
                 "name": "Singbox Template Source",
                 "config": {
                     "url": format!("{template_upstream_base}/sub")
@@ -1468,7 +1468,7 @@ async fn e2e_profile_singbox_template_source_converts_to_clash_groups_and_rules(
             Method::POST,
             "/api/sources",
             &json!({
-                "plugin_id": "subforge.builtin.static",
+                "plugin_id": "test.plugin.import-stub",
                 "name": "Nodes Source",
                 "config": {
                     "url": format!("{nodes_upstream_base}/sub")
@@ -1744,7 +1744,7 @@ async fn e2e_import_plugin_zip_with_top_level_directory() {
     let payload = read_json(import_response).await;
     assert_eq!(
         payload.get("plugin_id").and_then(Value::as_str),
-        Some("subforge.builtin.static")
+        Some("test.plugin.import-stub")
     );
 }
 
@@ -1777,7 +1777,7 @@ async fn e2e_import_plugin_zip_with_backslash_path_separator() {
     let payload = read_json(import_response).await;
     assert_eq!(
         payload.get("plugin_id").and_then(Value::as_str),
-        Some("subforge.builtin.static")
+        Some("test.plugin.import-stub")
     );
 }
 
@@ -1814,7 +1814,7 @@ async fn e2e_refresh_source_with_unsupported_network_profile_returns_bad_request
             Method::POST,
             "/api/sources",
             &json!({
-                "plugin_id": "subforge.builtin.static",
+                "plugin_id": "test.plugin.import-stub",
                 "name": "Unsupported Profile Source",
                 "config": {
                     "url": "https://example.com/subscription"
