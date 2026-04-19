@@ -53,9 +53,10 @@ pub(crate) async fn import_plugin_handler(
     let plugin_root_dir = resolve_plugin_root_dir(temp_dir.path())?;
 
     let manifest_path = plugin_root_dir.join("plugin.json");
-    let manifest_content = fs::read_to_string(&manifest_path).map_err(|_| internal_error_response())?;
-    let manifest: serde_json::Value =
-        serde_json::from_str(&manifest_content).map_err(|_| config_error_response("plugin.json 解析失败"))?;
+    let manifest_content =
+        fs::read_to_string(&manifest_path).map_err(|_| internal_error_response())?;
+    let manifest: serde_json::Value = serde_json::from_str(&manifest_content)
+        .map_err(|_| config_error_response("plugin.json 解析失败"))?;
     let import_plugin_id = manifest["plugin_id"]
         .as_str()
         .ok_or_else(|| config_error_response("plugin.json 缺少 plugin_id"))?;
