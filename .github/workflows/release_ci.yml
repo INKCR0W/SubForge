@@ -341,7 +341,8 @@ jobs:
             "subforge-core-$target"
           }
           Copy-Item -LiteralPath $sourceBinary -Destination (Join-Path $destDir $destName) -Force
-- name: Build desktop bundle (Windows NSIS)
+
+      - name: Build desktop bundle (Windows NSIS)
         if: runner.os == 'Windows'
         run: pnpm -C apps/desktop tauri build --ci --bundles nsis --target ${{ matrix.target }}
       - name: Build desktop bundle (macOS DMG)
