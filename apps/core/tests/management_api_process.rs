@@ -73,7 +73,7 @@ async fn run_process_management_api_chain_can_refresh_and_export_all_formats() {
         .post(format!("{api_base}/api/sources"))
         .bearer_auth(&admin_token)
         .json(&json!({
-            "plugin_id": "subforge.builtin.static",
+            "plugin_id": "test.plugin.import-stub",
             "name": "Process E2E Source",
             "config": {
                 "url": format!("{upstream_base}/sub")
@@ -313,7 +313,13 @@ fn build_builtin_plugin_zip_bytes() -> Vec<u8> {
             writer
                 .start_file(file_name, options)
                 .expect("写入 zip 条目失败");
-            let bytes = std::fs::read(plugin_dir.join(file_name)).expect("读取插件文件失败");
+            let mut bytes = std::fs::read(plugin_dir.join(file_name)).expect("读取插件文件失败");
+            if file_name == "plugin.json" {
+                let plugin_text = String::from_utf8_lossy(&bytes).into_owned();
+                bytes = plugin_text
+                    .replace("subforge.builtin.static", "test.plugin.import-stub")
+                    .into_bytes();
+            }
             writer.write_all(&bytes).expect("写入 zip 数据失败");
         }
         writer.finish().expect("完成 zip 构建失败");

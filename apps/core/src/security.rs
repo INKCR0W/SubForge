@@ -181,6 +181,14 @@ fn run_icacls(target: &str, args: &[&str]) -> Result<()> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
+        if is_icacls_access_denied(stderr.as_ref()) {
+            eprintln!(
+                "WARNING: 无法收敛 ACL（icacls {target} {}），已降级继续: {}",
+                args.join(" "),
+                stderr.trim()
+            );
+            return Ok(());
+        }
         return Err(anyhow!(
             "icacls 执行失败: icacls {target} {}，stdout: {}，stderr: {}",
             args.join(" "),
@@ -190,6 +198,12 @@ fn run_icacls(target: &str, args: &[&str]) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(windows)]
+fn is_icacls_access_denied(stderr: &str) -> bool {
+    let lowered = stderr.to_ascii_lowercase();
+    lowered.contains("access is denied") || stderr.contains("拒绝访问")
 }
 
 #[cfg(test)]

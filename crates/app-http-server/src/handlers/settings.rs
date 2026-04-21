@@ -161,9 +161,17 @@ fn set_owner_only_file_permissions(path: &Path) -> std::io::Result<()> {
         .args(["/inheritance:r"])
         .output()?;
     if !inheritance.status.success() {
+        let stderr = String::from_utf8_lossy(&inheritance.stderr);
+        if is_icacls_access_denied(stderr.as_ref()) {
+            eprintln!(
+                "WARNING: 无法收敛 admin_token ACL（继承），已降级继续: {}",
+                stderr.trim()
+            );
+            return Ok(());
+        }
         return Err(std::io::Error::other(format!(
             "icacls 关闭继承失败: {}",
-            String::from_utf8_lossy(&inheritance.stderr)
+            stderr
         )));
     }
 
@@ -172,11 +180,25 @@ fn set_owner_only_file_permissions(path: &Path) -> std::io::Result<()> {
         .args(["/grant:r", &grant])
         .output()?;
     if !grant_output.status.success() {
+        let stderr = String::from_utf8_lossy(&grant_output.stderr);
+        if is_icacls_access_denied(stderr.as_ref()) {
+            eprintln!(
+                "WARNING: 无法收敛 admin_token ACL（授权），已降级继续: {}",
+                stderr.trim()
+            );
+            return Ok(());
+        }
         return Err(std::io::Error::other(format!(
             "icacls 授权失败: {}",
-            String::from_utf8_lossy(&grant_output.stderr)
+            stderr
         )));
     }
 
     Ok(())
+}
+
+#[cfg(windows)]
+fn is_icacls_access_denied(stderr: &str) -> bool {
+    let lowered = stderr.to_ascii_lowercase();
+    lowered.contains("access is denied") || stderr.contains("拒绝访问")
 }
