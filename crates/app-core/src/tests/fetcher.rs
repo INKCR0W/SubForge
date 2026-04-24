@@ -533,7 +533,10 @@ proxy-groups:
     assert_eq!(nodes[0].server, "anytls.example.com");
     assert_eq!(nodes[0].port, 443);
     assert_eq!(
-        nodes[0].extra.get("password").and_then(|value| value.as_str()),
+        nodes[0]
+            .extra
+            .get("password")
+            .and_then(|value| value.as_str()),
         Some("anytls-pass")
     );
     assert_eq!(

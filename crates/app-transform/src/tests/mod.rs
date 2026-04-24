@@ -137,10 +137,7 @@ fn anytls_proxy_yaml_contains_expected_fields() {
             ("password", Value::String("anytls-pass".to_string())),
             ("client_fingerprint", Value::String("chrome".to_string())),
             ("alpn", json!(["h2", "http/1.1"])),
-            (
-                "skip_cert_verify",
-                Value::Bool(true),
-            ),
+            ("skip_cert_verify", Value::Bool(true)),
         ],
     );
     let yaml = ClashTransformer::default()
@@ -154,15 +151,20 @@ fn anytls_proxy_yaml_contains_expected_fields() {
         .expect("输出应包含 AnyTLS 节点");
 
     assert_eq!(proxy.get("type").and_then(Value::as_str), Some("anytls"));
-    assert_eq!(proxy.get("password").and_then(Value::as_str), Some("anytls-pass"));
+    assert_eq!(
+        proxy.get("password").and_then(Value::as_str),
+        Some("anytls-pass")
+    );
     assert_eq!(proxy.get("network").and_then(Value::as_str), Some("tcp"));
-    assert_eq!(proxy.get("sni").and_then(Value::as_str), Some("tls.example.com"));
+    assert_eq!(
+        proxy.get("sni").and_then(Value::as_str),
+        Some("tls.example.com")
+    );
     assert_eq!(
         proxy.get("client-fingerprint").and_then(Value::as_str),
         Some("chrome")
     );
 }
-
 
 #[test]
 fn snapshot_ss_outbound_json() {
