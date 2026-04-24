@@ -30,4 +30,4 @@ export {
   fetchSystemStatus,
   updateSystemSettings,
 } from "./api/system";
-export { deletePlugin, fetchPluginSchema, fetchPlugins, importPluginZip, togglePlugin } from "./api/plugins";
+export { deletePlugin, fetchPluginSchema, fetchPlugins, importPluginZip } from "./api/plugins";
