@@ -42,8 +42,7 @@ pub(super) fn build_test_state() -> ServerContext {
         database,
         secret_store,
         plugins_dir,
-        "127.0.0.1",
-        18118,
+        ("127.0.0.1", 18118),
         tx,
     )
 }

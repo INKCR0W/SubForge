@@ -119,8 +119,7 @@ async fn run_server(args: RunArgs) -> Result<()> {
         Arc::clone(&database),
         Arc::clone(&secret_store),
         data_dir.join("plugins"),
-        &host,
-        port,
+        (&host, port),
         event_sender,
     );
     let shutdown_receiver = server_context.shutdown_receiver();

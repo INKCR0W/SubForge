@@ -264,8 +264,7 @@ async fn spawn_api_server(
         database,
         secret_store,
         plugins_dir,
-        "127.0.0.1",
-        port,
+        ("127.0.0.1", port),
         event_sender,
     ));
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();

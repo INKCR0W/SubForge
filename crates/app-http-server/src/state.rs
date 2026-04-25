@@ -55,8 +55,7 @@ impl ServerContext {
         database: Arc<Database>,
         secret_store: Arc<dyn SecretStore>,
         plugins_dir: PathBuf,
-        listen_host: &str,
-        listen_port: u16,
+        listen_addr: (&str, u16),
         event_sender: broadcast::Sender<ApiEvent>,
     ) -> Self {
         let (shutdown_signal, _shutdown_receiver) = watch::channel(false);
@@ -66,7 +65,7 @@ impl ServerContext {
             database,
             secret_store,
             plugins_dir,
-            host_validation: HostValidationState::new(listen_host, listen_port),
+            host_validation: HostValidationState::new(listen_addr.0, listen_addr.1),
             event_sender,
             shutdown_signal,
             rate_limiter: Arc::new(RateLimiter::default()),
