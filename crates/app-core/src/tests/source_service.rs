@@ -96,7 +96,10 @@ fn config_schema_without_additional_properties_allows_extra_scalar_fields() {
     let secret_store = MemorySecretStore::new();
     let source_service = SourceService::new(&db, &plugins_dir, &secret_store);
     let mut config = BTreeMap::new();
-    config.insert("url".to_string(), json!("https://example.com/subscription.txt"));
+    config.insert(
+        "url".to_string(),
+        json!("https://example.com/subscription.txt"),
+    );
     config.insert("token".to_string(), json!("token-value"));
     config.insert("extra_flag".to_string(), json!(true));
 
@@ -121,10 +124,9 @@ fn config_schema_with_additional_properties_true_allows_extra_scalar_fields() {
 
     let installed_plugin_dir = plugins_dir.join("vendor.example.secure-static");
     let schema_path = installed_plugin_dir.join("schema.json");
-    let mut schema: Value = serde_json::from_str(
-        &fs::read_to_string(&schema_path).expect("读取 schema 失败"),
-    )
-    .expect("解析 schema 失败");
+    let mut schema: Value =
+        serde_json::from_str(&fs::read_to_string(&schema_path).expect("读取 schema 失败"))
+            .expect("解析 schema 失败");
     schema["additionalProperties"] = Value::Bool(true);
     fs::write(
         &schema_path,
@@ -135,12 +137,19 @@ fn config_schema_with_additional_properties_true_allows_extra_scalar_fields() {
     let secret_store = MemorySecretStore::new();
     let source_service = SourceService::new(&db, &plugins_dir, &secret_store);
     let mut config = BTreeMap::new();
-    config.insert("url".to_string(), json!("https://example.com/subscription.txt"));
+    config.insert(
+        "url".to_string(),
+        json!("https://example.com/subscription.txt"),
+    );
     config.insert("token".to_string(), json!("token-value"));
     config.insert("extra_mode".to_string(), json!("strict"));
 
     let created = source_service
-        .create_source("vendor.example.secure-static", "Open Explicit Source", config)
+        .create_source(
+            "vendor.example.secure-static",
+            "Open Explicit Source",
+            config,
+        )
         .expect("additionalProperties=true 时应允许额外标量字段");
 
     assert_eq!(
@@ -163,10 +172,9 @@ fn config_schema_with_additional_properties_false_rejects_extra_fields() {
 
     let installed_plugin_dir = plugins_dir.join("vendor.example.secure-static");
     let schema_path = installed_plugin_dir.join("schema.json");
-    let mut schema: Value = serde_json::from_str(
-        &fs::read_to_string(&schema_path).expect("读取 schema 失败"),
-    )
-    .expect("解析 schema 失败");
+    let mut schema: Value =
+        serde_json::from_str(&fs::read_to_string(&schema_path).expect("读取 schema 失败"))
+            .expect("解析 schema 失败");
     schema["additionalProperties"] = Value::Bool(false);
     fs::write(
         &schema_path,
@@ -177,12 +185,19 @@ fn config_schema_with_additional_properties_false_rejects_extra_fields() {
     let secret_store = MemorySecretStore::new();
     let source_service = SourceService::new(&db, &plugins_dir, &secret_store);
     let mut config = BTreeMap::new();
-    config.insert("url".to_string(), json!("https://example.com/subscription.txt"));
+    config.insert(
+        "url".to_string(),
+        json!("https://example.com/subscription.txt"),
+    );
     config.insert("token".to_string(), json!("token-value"));
     config.insert("extra_mode".to_string(), json!("strict"));
 
     let error = source_service
-        .create_source("vendor.example.secure-static", "Closed Schema Source", config)
+        .create_source(
+            "vendor.example.secure-static",
+            "Closed Schema Source",
+            config,
+        )
         .expect_err("additionalProperties=false 时应拒绝额外字段");
 
     assert!(matches!(error, CoreError::ConfigInvalid(_)));

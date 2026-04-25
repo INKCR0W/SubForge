@@ -45,7 +45,10 @@ pub(crate) fn parse_anytls_uri(
     insert_optional_bool(
         &mut extra,
         "skip_cert_verify",
-        query_bool(&query_pairs, &["allowInsecure", "allow_insecure", "insecure"]),
+        query_bool(
+            &query_pairs,
+            &["allowInsecure", "allow_insecure", "insecure"],
+        ),
     );
     insert_optional_alpn(&mut extra, query_value(&query_pairs, &["alpn", "alpns"]));
 

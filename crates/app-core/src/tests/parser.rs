@@ -204,7 +204,10 @@ anytls://anytls-pass@anytls.example.com:443?sni=sni.anytls.example.com&alpn=h2%2
         .expect("应包含 tuic 节点");
     assert_eq!(tuic.transport, ProxyTransport::Quic);
     assert!(tuic.tls.enabled);
-    assert_eq!(tuic.tls.server_name.as_deref(), Some("sni.tuic.example.com"));
+    assert_eq!(
+        tuic.tls.server_name.as_deref(),
+        Some("sni.tuic.example.com")
+    );
     assert_eq!(
         tuic.extra.get("uuid"),
         Some(&Value::String(
@@ -224,10 +227,7 @@ anytls://anytls-pass@anytls.example.com:443?sni=sni.anytls.example.com&alpn=h2%2
         Some(&Value::String("native".to_string()))
     );
     assert_eq!(tuic.extra.get("alpn"), Some(&json!(["h3", "h3-29"])));
-    assert_eq!(
-        tuic.extra.get("skip_cert_verify"),
-        Some(&Value::Bool(true))
-    );
+    assert_eq!(tuic.extra.get("skip_cert_verify"), Some(&Value::Bool(true)));
 
     let anytls = nodes
         .iter()

@@ -744,7 +744,10 @@ fn clash_template_roundtrip_preserves_provider_targets_without_node_injection() 
         .iter()
         .filter_map(Value::as_str)
         .collect::<Vec<_>>();
-    assert!(auto_group_proxies.is_empty(), "provider 组不应被扩展为聚合节点");
+    assert!(
+        auto_group_proxies.is_empty(),
+        "provider 组不应被扩展为聚合节点"
+    );
 
     let auto_group_use = auto_group
         .get("use")

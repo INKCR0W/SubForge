@@ -173,7 +173,8 @@ impl ClashTransformer {
                 .proxies
                 .iter()
                 .any(|item| !group_name_set.contains(item.as_str()) && !is_builtin_policy(item));
-            let populate_all_nodes = template_group.proxies.is_empty() && template_group.include_all;
+            let populate_all_nodes =
+                template_group.proxies.is_empty() && template_group.include_all;
             let candidate_nodes = if has_plain_node_slot {
                 filter_group_candidate_nodes(
                     &appended_node_names,

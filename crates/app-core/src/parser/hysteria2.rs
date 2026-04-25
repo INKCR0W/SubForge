@@ -47,7 +47,10 @@ pub(crate) fn parse_hysteria2_uri(
     insert_optional_bool(
         &mut extra,
         "skip_cert_verify",
-        query_bool(&query_pairs, &["insecure", "allowInsecure", "allow_insecure"]),
+        query_bool(
+            &query_pairs,
+            &["insecure", "allowInsecure", "allow_insecure"],
+        ),
     );
     insert_optional_alpn(&mut extra, query_value(&query_pairs, &["alpn", "alpns"]));
 
