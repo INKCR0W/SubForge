@@ -165,6 +165,7 @@ fn routing_template_ir_can_convert_to_clash_template() {
             tolerance: None,
             include_all: false,
             use_provider: false,
+            providers: vec!["provider-main".to_string()],
             filter: None,
             exclude_filter: None,
         }],
@@ -176,6 +177,7 @@ fn routing_template_ir_can_convert_to_clash_template() {
     let template = ir.into_clash_template();
     assert_eq!(template.groups.len(), 1);
     assert_eq!(template.groups[0].name, "Proxy");
+    assert_eq!(template.groups[0].providers, vec!["provider-main".to_string()]);
     assert_eq!(template.rules, vec!["MATCH,Proxy".to_string()]);
     assert!(template.preserve_original_proxy_names);
     assert!(template.base_config_yaml.is_none());
@@ -195,6 +197,7 @@ fn clash_routing_template_roundtrips_with_groups_and_rules() {
                 tolerance: None,
                 include_all: false,
                 use_provider: false,
+                providers: Vec::new(),
                 filter: None,
                 exclude_filter: None,
             },
@@ -207,6 +210,7 @@ fn clash_routing_template_roundtrips_with_groups_and_rules() {
                 tolerance: Some(50),
                 include_all: false,
                 use_provider: false,
+                providers: Vec::new(),
                 filter: None,
                 exclude_filter: None,
             },
@@ -256,6 +260,7 @@ fn clash_routing_template_defaults_preserve_flag_to_false_when_omitted() {
             tolerance: None,
             include_all: false,
             use_provider: false,
+            providers: Vec::new(),
             filter: None,
             exclude_filter: None,
         }],

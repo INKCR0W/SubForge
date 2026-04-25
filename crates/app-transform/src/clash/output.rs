@@ -26,6 +26,8 @@ pub(super) struct ClashProxyGroup {
     pub(super) interval: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) tolerance: Option<u16>,
+    #[serde(rename = "use", skip_serializing_if = "Vec::is_empty")]
+    pub(super) providers: Vec<String>,
 }
 
 pub(super) fn serialize_with_base_config(

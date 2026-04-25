@@ -145,9 +145,19 @@ fn parse_clash_routing_template_ir(payload: &str) -> Option<RoutingTemplateIr> {
         )
         .and_then(YamlValue::as_bool)
         .unwrap_or(false);
-        let use_provider = yaml_map_get(group_map, "use")
+        let providers = yaml_map_get(group_map, "use")
             .and_then(YamlValue::as_sequence)
-            .is_some_and(|items| !items.is_empty());
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(YamlValue::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let use_provider = !providers.is_empty();
         let filter = yaml_map_get(group_map, "filter")
             .and_then(YamlValue::as_str)
             .map(str::trim)
@@ -168,6 +178,7 @@ fn parse_clash_routing_template_ir(payload: &str) -> Option<RoutingTemplateIr> {
             tolerance,
             include_all,
             use_provider,
+            providers,
             filter,
             exclude_filter,
         });
@@ -271,6 +282,7 @@ fn parse_singbox_group(outbound: &JsonValue) -> Option<RoutingTemplateGroupIr> {
         tolerance,
         include_all: false,
         use_provider: false,
+        providers: Vec::new(),
         filter: None,
         exclude_filter: None,
     })

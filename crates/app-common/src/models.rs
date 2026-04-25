@@ -101,6 +101,8 @@ pub struct RoutingTemplateGroupIr {
     pub include_all: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub use_provider: bool,
+    #[serde(default, rename = "use", skip_serializing_if = "Vec::is_empty")]
+    pub providers: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -118,6 +120,7 @@ impl From<RoutingTemplateGroupIr> for ClashRoutingTemplateGroup {
             tolerance: value.tolerance,
             include_all: value.include_all,
             use_provider: value.use_provider,
+            providers: value.providers,
             filter: value.filter,
             exclude_filter: value.exclude_filter,
         }
@@ -140,6 +143,8 @@ pub struct ClashRoutingTemplateGroup {
     pub include_all: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub use_provider: bool,
+    #[serde(default, rename = "use", skip_serializing_if = "Vec::is_empty")]
+    pub providers: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

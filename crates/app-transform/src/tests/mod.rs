@@ -461,6 +461,7 @@ fn clash_template_preserves_existing_nodes_and_appends_aggregated_set() {
                 tolerance: None,
                 include_all: false,
                 use_provider: false,
+                providers: Vec::new(),
                 filter: None,
                 exclude_filter: None,
             },
@@ -473,6 +474,7 @@ fn clash_template_preserves_existing_nodes_and_appends_aggregated_set() {
                 tolerance: Some(50),
                 include_all: false,
                 use_provider: false,
+                providers: Vec::new(),
                 filter: None,
                 exclude_filter: None,
             },
@@ -552,6 +554,7 @@ fn clash_template_keeps_pure_subgroup_reference_without_injecting_nodes() {
                 tolerance: None,
                 include_all: false,
                 use_provider: false,
+                providers: Vec::new(),
                 filter: None,
                 exclude_filter: None,
             },
@@ -564,6 +567,7 @@ fn clash_template_keeps_pure_subgroup_reference_without_injecting_nodes() {
                 tolerance: Some(50),
                 include_all: false,
                 use_provider: false,
+                providers: Vec::new(),
                 filter: None,
                 exclude_filter: None,
             },
@@ -629,6 +633,7 @@ fn clash_template_supports_provider_style_groups_with_filter() {
                 tolerance: None,
                 include_all: false,
                 use_provider: false,
+                providers: Vec::new(),
                 filter: None,
                 exclude_filter: None,
             },
@@ -641,6 +646,7 @@ fn clash_template_supports_provider_style_groups_with_filter() {
                 tolerance: None,
                 include_all: true,
                 use_provider: true,
+                providers: vec!["provider-hk".to_string()],
                 filter: Some("HK".to_string()),
                 exclude_filter: None,
             },
@@ -669,12 +675,140 @@ fn clash_template_supports_provider_style_groups_with_filter() {
         .filter_map(Value::as_str)
         .collect::<Vec<_>>();
     assert_eq!(auto_group_proxies, vec!["HK-01"]);
+    let auto_group_use = auto_group
+        .get("use")
+        .and_then(Value::as_array)
+        .expect("provider 分组应保留 use 列表")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    assert_eq!(auto_group_use, vec!["provider-hk"]);
     let rules = value
         .get("rules")
         .and_then(Value::as_array)
         .expect("模板模式应包含 rules");
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].as_str(), Some("MATCH,Proxy"));
+}
+
+#[test]
+fn clash_template_roundtrip_preserves_provider_targets_without_node_injection() {
+    let transformer = ClashTransformer::default();
+    let nodes = vec![build_node(
+        "HK-01",
+        ProxyProtocol::Ss,
+        ProxyTransport::Tcp,
+        Some("hk"),
+        vec![
+            ("cipher", Value::String("aes-128-gcm".to_string())),
+            ("password", Value::String("p@ss".to_string())),
+        ],
+    )];
+
+    let template = ClashRoutingTemplate {
+        base_config_yaml: None,
+        groups: vec![ClashRoutingTemplateGroup {
+            name: "Auto".to_string(),
+            group_type: "select".to_string(),
+            proxies: Vec::new(),
+            url: None,
+            interval: None,
+            tolerance: None,
+            include_all: false,
+            use_provider: true,
+            providers: vec!["provider-hk".to_string()],
+            filter: Some("HK".to_string()),
+            exclude_filter: None,
+        }],
+        rules: vec!["MATCH,Auto".to_string()],
+        preserve_original_proxy_names: true,
+    };
+
+    let yaml = transformer
+        .transform_with_template(&nodes, Some(&template))
+        .expect("带模板转换 YAML 失败");
+    let value: Value = serde_yaml::from_str(&yaml).expect("YAML 解析失败");
+    let groups = value
+        .get("proxy-groups")
+        .and_then(Value::as_array)
+        .expect("应包含 proxy-groups");
+    let auto_group = groups
+        .iter()
+        .find(|group| group.get("name").and_then(Value::as_str) == Some("Auto"))
+        .expect("应包含 Auto 分组");
+
+    let auto_group_proxies = auto_group
+        .get("proxies")
+        .and_then(Value::as_array)
+        .expect("Auto 分组缺少 proxies")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    assert!(auto_group_proxies.is_empty(), "provider 组不应被扩展为聚合节点");
+
+    let auto_group_use = auto_group
+        .get("use")
+        .and_then(Value::as_array)
+        .expect("provider 分组应保留 use 列表")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    assert_eq!(auto_group_use, vec!["provider-hk"]);
+}
+
+#[test]
+fn singbox_template_roundtrip_preserves_provider_targets_without_node_injection() {
+    let transformer = SingboxTransformer::default();
+    let nodes = vec![build_node(
+        "HK-01",
+        ProxyProtocol::Ss,
+        ProxyTransport::Tcp,
+        Some("hk"),
+        vec![
+            ("cipher", Value::String("aes-128-gcm".to_string())),
+            ("password", Value::String("p@ss".to_string())),
+        ],
+    )];
+
+    let template = ClashRoutingTemplate {
+        base_config_yaml: None,
+        groups: vec![ClashRoutingTemplateGroup {
+            name: "Auto".to_string(),
+            group_type: "select".to_string(),
+            proxies: Vec::new(),
+            url: None,
+            interval: None,
+            tolerance: None,
+            include_all: false,
+            use_provider: true,
+            providers: vec!["provider-hk".to_string()],
+            filter: Some("HK".to_string()),
+            exclude_filter: None,
+        }],
+        rules: vec!["MATCH,Auto".to_string()],
+        preserve_original_proxy_names: true,
+    };
+
+    let json = transformer
+        .transform_with_template(&nodes, Some(&template))
+        .expect("带模板转换 sing-box 失败");
+    let value: Value = serde_json::from_str(&json).expect("sing-box JSON 解析失败");
+    let outbounds = value
+        .get("outbounds")
+        .and_then(Value::as_array)
+        .expect("应包含 outbounds");
+    let auto_group = outbounds
+        .iter()
+        .find(|outbound| outbound.get("tag").and_then(Value::as_str) == Some("Auto"))
+        .expect("应包含 Auto selector");
+    let auto_targets = auto_group
+        .get("outbounds")
+        .and_then(Value::as_array)
+        .expect("Auto selector 缺少 outbounds")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    assert!(auto_targets.is_empty(), "provider 组不应被扩展为聚合节点");
 }
 
 #[test]
@@ -716,6 +850,7 @@ fn singbox_template_preserves_existing_nodes_and_appends_aggregated_set() {
                 tolerance: None,
                 include_all: false,
                 use_provider: false,
+                providers: Vec::new(),
                 filter: None,
                 exclude_filter: None,
             },
@@ -728,6 +863,7 @@ fn singbox_template_preserves_existing_nodes_and_appends_aggregated_set() {
                 tolerance: Some(50),
                 include_all: false,
                 use_provider: false,
+                providers: Vec::new(),
                 filter: None,
                 exclude_filter: None,
             },
@@ -900,6 +1036,7 @@ fn clash_template_context_roundtrip_keeps_template_groups_and_rules() {
                 tolerance: None,
                 include_all: false,
                 use_provider: false,
+                providers: Vec::new(),
                 filter: None,
                 exclude_filter: None,
             },
@@ -912,6 +1049,7 @@ fn clash_template_context_roundtrip_keeps_template_groups_and_rules() {
                 tolerance: None,
                 include_all: false,
                 use_provider: false,
+                providers: Vec::new(),
                 filter: None,
                 exclude_filter: None,
             },

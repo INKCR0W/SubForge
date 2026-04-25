@@ -275,6 +275,7 @@ rules:
         serde_json::from_str(&setting.value).expect("模板 JSON 反序列化失败");
     assert_eq!(template.groups.len(), 2);
     assert_eq!(template.groups[0].name, "Proxy");
+    assert!(template.groups[0].providers.is_empty());
     assert_eq!(template.rules, vec!["MATCH,Proxy".to_string()]);
     assert!(template.preserve_original_proxy_names);
     assert!(
@@ -282,6 +283,49 @@ rules:
             .base_config_yaml
             .as_deref()
             .is_some_and(|value| value.contains("mixed-port: 7890"))
+    );
+}
+
+#[test]
+fn static_fetcher_preserves_provider_targets_in_clash_routing_template() {
+    let db = Database::open_in_memory().expect("内存数据库初始化失败");
+    let source_repository = SourceRepository::new(&db);
+    source_repository
+        .insert(&sample_source(
+            "source-fetch-template-provider",
+            "subforge.builtin.static",
+        ))
+        .expect("写入来源实例失败");
+
+    let fetcher = StaticFetcher::new(&db).expect("初始化 StaticFetcher 失败");
+    let payload = r#"
+proxy-groups:
+  - name: Auto
+    type: select
+    use:
+      - provider-hk
+    filter: HK
+rules:
+  - MATCH,Auto
+"#;
+    let nodes = fetcher
+        .parse_and_cache_content("source-fetch-template-provider", payload)
+        .expect("缓存 provider 模板内容不应失败");
+    assert!(nodes.is_empty(), "纯模板内容应短路为零节点");
+
+    let repository = SettingsRepository::new(&db);
+    let setting = repository
+        .get("source.source-fetch-template-provider.clash_routing_template")
+        .expect("读取模板设置失败")
+        .expect("应保存 Clash 分流模板");
+    let template: app_common::ClashRoutingTemplate =
+        serde_json::from_str(&setting.value).expect("模板 JSON 反序列化失败");
+    assert_eq!(template.groups.len(), 1);
+    assert_eq!(template.groups[0].name, "Auto");
+    assert!(template.groups[0].use_provider);
+    assert_eq!(
+        template.groups[0].providers,
+        vec!["provider-hk".to_string()]
     );
 }
 
@@ -347,7 +391,9 @@ fn static_fetcher_extracts_singbox_template_and_converts_to_clash_semantics() {
         serde_json::from_str(&setting.value).expect("模板 JSON 反序列化失败");
     assert_eq!(template.groups.len(), 2);
     assert_eq!(template.groups[0].name, "Proxy");
+    assert!(template.groups[0].providers.is_empty());
     assert_eq!(template.groups[1].group_type, "url-test");
+    assert!(template.groups[1].providers.is_empty());
     assert!(template.preserve_original_proxy_names);
     assert_eq!(
         template.rules,

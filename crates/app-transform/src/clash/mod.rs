@@ -118,6 +118,7 @@ impl ClashTransformer {
                 url: None,
                 interval: None,
                 tolerance: None,
+                providers: Vec::new(),
             },
             ClashProxyGroup {
                 name: "Auto".to_string(),
@@ -126,6 +127,7 @@ impl ClashTransformer {
                 url: Some(self.auto_test_url.clone()),
                 interval: Some(self.auto_test_interval_seconds),
                 tolerance: Some(self.auto_test_tolerance),
+                providers: Vec::new(),
             },
         ];
 
@@ -137,6 +139,7 @@ impl ClashTransformer {
                 url: None,
                 interval: None,
                 tolerance: None,
+                providers: Vec::new(),
             });
         }
 
@@ -170,8 +173,7 @@ impl ClashTransformer {
                 .proxies
                 .iter()
                 .any(|item| !group_name_set.contains(item.as_str()) && !is_builtin_policy(item));
-            let populate_all_nodes = template_group.proxies.is_empty()
-                && (template_group.include_all || template_group.use_provider);
+            let populate_all_nodes = template_group.proxies.is_empty() && template_group.include_all;
             let candidate_nodes = if has_plain_node_slot {
                 filter_group_candidate_nodes(
                     &appended_node_names,
@@ -227,6 +229,7 @@ impl ClashTransformer {
                 url: template_group.url.clone(),
                 interval: template_group.interval,
                 tolerance: template_group.tolerance,
+                providers: template_group.providers.clone(),
             });
         }
 
