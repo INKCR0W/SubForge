@@ -17,6 +17,7 @@ app-transform = { path = "../app-transform" }
 axum = { workspace = true, features = ["multipart"] }
 base64.workspace = true
 getrandom.workspace = true
+if-addrs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 time.workspace = true

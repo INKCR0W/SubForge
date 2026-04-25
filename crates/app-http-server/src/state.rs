@@ -55,6 +55,7 @@ impl ServerContext {
         database: Arc<Database>,
         secret_store: Arc<dyn SecretStore>,
         plugins_dir: PathBuf,
+        listen_host: &str,
         listen_port: u16,
         event_sender: broadcast::Sender<ApiEvent>,
     ) -> Self {
@@ -65,7 +66,7 @@ impl ServerContext {
             database,
             secret_store,
             plugins_dir,
-            host_validation: HostValidationState::new(listen_port),
+            host_validation: HostValidationState::new(listen_host, listen_port),
             event_sender,
             shutdown_signal,
             rate_limiter: Arc::new(RateLimiter::default()),
@@ -178,15 +179,43 @@ pub(crate) struct HostValidationState {
 }
 
 impl HostValidationState {
-    fn new(port: u16) -> Self {
+    pub(crate) fn new(listen_host: &str, port: u16) -> Self {
+        Self::from_hosts(Self::build_allowed_hosts(listen_host, port))
+    }
+
+    pub(crate) fn from_hosts<I>(hosts: I) -> Self
+    where
+        I: IntoIterator<Item = String>,
+    {
+        Self {
+            allowed_hosts: Arc::new(hosts.into_iter().collect()),
+        }
+    }
+
+    fn build_allowed_hosts(listen_host: &str, port: u16) -> HashSet<String> {
         let mut hosts = HashSet::new();
         for host in ["127.0.0.1", "localhost", "[::1]"] {
             hosts.insert(host.to_string());
             hosts.insert(format!("{host}:{port}"));
         }
-        Self {
-            allowed_hosts: Arc::new(hosts),
+
+        let normalized_listen_host = listen_host.trim().to_ascii_lowercase();
+        match normalized_listen_host.as_str() {
+            "" | "127.0.0.1" | "localhost" | "[::1]" => {}
+            "0.0.0.0" | "::" | "[::]" => {
+                for interface in if_addrs::get_if_addrs().unwrap_or_default() {
+                    let ip = interface.ip().to_string().to_ascii_lowercase();
+                    hosts.insert(ip.clone());
+                    hosts.insert(format!("{ip}:{port}"));
+                }
+            }
+            _ => {
+                hosts.insert(normalized_listen_host.clone());
+                hosts.insert(format!("{normalized_listen_host}:{port}"));
+            }
         }
+
+        hosts
     }
 
     pub(crate) fn is_allowed(&self, host_header: &str) -> bool {

@@ -66,6 +66,55 @@ async fn health_endpoint_rejects_invalid_host_header() {
 }
 
 #[tokio::test]
+async fn non_loopback_listen_host_is_allowed_by_host_validation() {
+    let mut state = build_test_state();
+    state.host_validation = crate::state::HostValidationState::from_hosts([
+        "127.0.0.1".to_string(),
+        "127.0.0.1:18118".to_string(),
+        "localhost".to_string(),
+        "localhost:18118".to_string(),
+        "[::1]".to_string(),
+        "[::1]:18118".to_string(),
+        "198.51.100.20".to_string(),
+        "198.51.100.20:18118".to_string(),
+    ]);
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .header(HOST, "198.51.100.20:18118")
+                .body(Body::empty())
+                .expect("创建请求失败"),
+        )
+        .await
+        .expect("请求执行失败");
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn configured_external_ip_is_allowed_by_host_validation() {
+    let mut state = build_test_state();
+    state.host_validation = crate::state::HostValidationState::new("192.0.2.10", 18118);
+    let app = build_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .header(HOST, "192.0.2.10:18118")
+                .body(Body::empty())
+                .expect("创建请求失败"),
+        )
+        .await
+        .expect("请求执行失败");
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn health_response_does_not_include_cors_allow_origin_header() {
     let app = build_router(build_test_state());
     let response = app

@@ -119,6 +119,7 @@ async fn run_server(args: RunArgs) -> Result<()> {
         Arc::clone(&database),
         Arc::clone(&secret_store),
         data_dir.join("plugins"),
+        &host,
         port,
         event_sender,
     );
