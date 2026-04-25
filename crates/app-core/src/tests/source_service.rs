@@ -83,6 +83,114 @@ fn source_config_validation_error_returns_e_config_invalid() {
 }
 
 #[test]
+fn config_schema_without_additional_properties_allows_extra_scalar_fields() {
+    let db = Database::open_in_memory().expect("内存数据库初始化失败");
+    let temp_root = create_temp_dir("source-allow-extra-default-open");
+    let plugins_dir = temp_root.join("plugins");
+    let plugin_source_dir = create_secret_static_plugin_dir(&temp_root);
+    let install_service = PluginInstallService::new(&db, &plugins_dir);
+    install_service
+        .install_from_dir(&plugin_source_dir)
+        .expect("安装带密钥字段插件应成功");
+
+    let secret_store = MemorySecretStore::new();
+    let source_service = SourceService::new(&db, &plugins_dir, &secret_store);
+    let mut config = BTreeMap::new();
+    config.insert("url".to_string(), json!("https://example.com/subscription.txt"));
+    config.insert("token".to_string(), json!("token-value"));
+    config.insert("extra_flag".to_string(), json!(true));
+
+    let created = source_service
+        .create_source("vendor.example.secure-static", "Open Schema Source", config)
+        .expect("省略 additionalProperties 时应允许额外标量字段");
+
+    assert_eq!(created.config.get("extra_flag"), Some(&Value::Bool(true)));
+    cleanup_dir(&temp_root);
+}
+
+#[test]
+fn config_schema_with_additional_properties_true_allows_extra_scalar_fields() {
+    let db = Database::open_in_memory().expect("内存数据库初始化失败");
+    let temp_root = create_temp_dir("source-allow-extra-open");
+    let plugins_dir = temp_root.join("plugins");
+    let plugin_source_dir = create_secret_static_plugin_dir(&temp_root);
+    let install_service = PluginInstallService::new(&db, &plugins_dir);
+    install_service
+        .install_from_dir(&plugin_source_dir)
+        .expect("安装带密钥字段插件应成功");
+
+    let installed_plugin_dir = plugins_dir.join("vendor.example.secure-static");
+    let schema_path = installed_plugin_dir.join("schema.json");
+    let mut schema: Value = serde_json::from_str(
+        &fs::read_to_string(&schema_path).expect("读取 schema 失败"),
+    )
+    .expect("解析 schema 失败");
+    schema["additionalProperties"] = Value::Bool(true);
+    fs::write(
+        &schema_path,
+        serde_json::to_string_pretty(&schema).expect("序列化 schema 失败"),
+    )
+    .expect("写入 schema 失败");
+
+    let secret_store = MemorySecretStore::new();
+    let source_service = SourceService::new(&db, &plugins_dir, &secret_store);
+    let mut config = BTreeMap::new();
+    config.insert("url".to_string(), json!("https://example.com/subscription.txt"));
+    config.insert("token".to_string(), json!("token-value"));
+    config.insert("extra_mode".to_string(), json!("strict"));
+
+    let created = source_service
+        .create_source("vendor.example.secure-static", "Open Explicit Source", config)
+        .expect("additionalProperties=true 时应允许额外标量字段");
+
+    assert_eq!(
+        created.config.get("extra_mode"),
+        Some(&Value::String("strict".to_string()))
+    );
+    cleanup_dir(&temp_root);
+}
+
+#[test]
+fn config_schema_with_additional_properties_false_rejects_extra_fields() {
+    let db = Database::open_in_memory().expect("内存数据库初始化失败");
+    let temp_root = create_temp_dir("source-reject-extra-closed");
+    let plugins_dir = temp_root.join("plugins");
+    let plugin_source_dir = create_secret_static_plugin_dir(&temp_root);
+    let install_service = PluginInstallService::new(&db, &plugins_dir);
+    install_service
+        .install_from_dir(&plugin_source_dir)
+        .expect("安装带密钥字段插件应成功");
+
+    let installed_plugin_dir = plugins_dir.join("vendor.example.secure-static");
+    let schema_path = installed_plugin_dir.join("schema.json");
+    let mut schema: Value = serde_json::from_str(
+        &fs::read_to_string(&schema_path).expect("读取 schema 失败"),
+    )
+    .expect("解析 schema 失败");
+    schema["additionalProperties"] = Value::Bool(false);
+    fs::write(
+        &schema_path,
+        serde_json::to_string_pretty(&schema).expect("序列化 schema 失败"),
+    )
+    .expect("写入 schema 失败");
+
+    let secret_store = MemorySecretStore::new();
+    let source_service = SourceService::new(&db, &plugins_dir, &secret_store);
+    let mut config = BTreeMap::new();
+    config.insert("url".to_string(), json!("https://example.com/subscription.txt"));
+    config.insert("token".to_string(), json!("token-value"));
+    config.insert("extra_mode".to_string(), json!("strict"));
+
+    let error = source_service
+        .create_source("vendor.example.secure-static", "Closed Schema Source", config)
+        .expect_err("additionalProperties=false 时应拒绝额外字段");
+
+    assert!(matches!(error, CoreError::ConfigInvalid(_)));
+    assert_eq!(error.code(), "E_CONFIG_INVALID");
+    cleanup_dir(&temp_root);
+}
+
+#[test]
 fn builtin_static_source_defaults_user_agent_to_clash_meta() {
     let db = Database::open_in_memory().expect("内存数据库初始化失败");
     let temp_root = create_temp_dir("source-default-user-agent");

@@ -21,7 +21,7 @@ impl<'a> SourceService<'a> {
             }
         }
 
-        if loaded.schema.additional_properties != Some(true) {
+        if loaded.schema.additional_properties == Some(false) {
             for key in config.keys() {
                 if !loaded.schema.properties.contains_key(key) {
                     return Err(CoreError::ConfigInvalid(format!(
@@ -65,7 +65,7 @@ impl<'a> SourceService<'a> {
             }
         }
 
-        if loaded.schema.additional_properties == Some(true) {
+        if loaded.schema.additional_properties != Some(false) {
             for (field_name, value) in config {
                 if loaded.schema.properties.contains_key(field_name) {
                     continue;
