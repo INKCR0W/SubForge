@@ -72,6 +72,8 @@ my-plugin/
 - `entrypoints`：默认空对象
 - `capabilities`：默认 `[]`，若填写仅允许：
   `http / cookie / json / html / base64 / secret / log / time`
+  - 运行时 API 按该字段按需注入；未声明的能力不会注册到 Lua 全局。
+  - 例如脚本调用 `http.request` 但未声明 `http`，会报：`attempt to index a nil value (global 'http')`。
 - `network_profile`：默认 `standard`，可选：
   `standard / browser_chrome / browser_firefox / webview_assisted`
 - `anti_bot_level`：默认 `low`
@@ -154,6 +156,15 @@ my-plugin/
 - `E_SCRIPT_TIMEOUT`
 - `E_SCRIPT_LIMIT`
 - `E_SCRIPT_RUNTIME`
+
+## 常见运行时报错排查
+
+- 报错：`attempt to index a nil value (global 'http')`
+  - 原因：`plugin.json` 未在 `capabilities` 中声明 `http`。
+  - 修复：在 `capabilities` 增加 `"http"`，并确保入口脚本实际使用到的 API（如 `json/base64/secret/log/time`）也一并声明。
+- 报错：`attempt to index a nil value (global 'json'/'secret'/...)`
+  - 原因：对应 capability 未声明。
+  - 修复：把缺失能力加入 `capabilities`，名称需与白名单完全一致。
 
 ## SSRF 与安全边界
 
