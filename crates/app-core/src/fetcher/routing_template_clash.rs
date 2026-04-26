@@ -101,6 +101,8 @@ fn parse_clash_proxy(item: &YamlValue, source_id: &str, updated_at: &str) -> Cor
         "tuic" => ProxyProtocol::Tuic,
         "anytls" => ProxyProtocol::AnyTls,
         "wireguard" => ProxyProtocol::WireGuard,
+        "socks5" => ProxyProtocol::Socks5,
+        "http" => ProxyProtocol::Http,
         _ => {
             return Err(CoreError::SubscriptionParse(format!(
                 "不支持的 Clash 节点类型：{}",
@@ -184,7 +186,7 @@ fn parse_clash_proxy(item: &YamlValue, source_id: &str, updated_at: &str) -> Cor
 fn resolve_transport(protocol: &ProxyProtocol, network: Option<&str>) -> ProxyTransport {
     match protocol {
         ProxyProtocol::Hysteria2 | ProxyProtocol::Tuic => ProxyTransport::Quic,
-        ProxyProtocol::AnyTls => ProxyTransport::Tcp,
+        ProxyProtocol::AnyTls | ProxyProtocol::Socks5 | ProxyProtocol::Http => ProxyTransport::Tcp,
         _ => map_transport(
             network
                 .map(str::trim)
@@ -209,6 +211,7 @@ fn validate_required_fields(
         ProxyProtocol::Tuic => &["uuid", "password"][..],
         ProxyProtocol::AnyTls => &["password"][..],
         ProxyProtocol::WireGuard => &["private_key"][..],
+        ProxyProtocol::Socks5 | ProxyProtocol::Http => &[][..],
     };
 
     for key in required {

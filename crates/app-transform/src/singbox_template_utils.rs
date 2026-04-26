@@ -68,6 +68,7 @@ fn simple_outbound(outbound_type: &str, tag: &str) -> SingboxOutbound {
         server: None,
         server_port: None,
         method: None,
+        username: None,
         password: None,
         uuid: None,
         security: None,

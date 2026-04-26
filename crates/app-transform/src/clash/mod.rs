@@ -252,6 +252,8 @@ pub(super) struct ClashProxy {
     #[serde(skip_serializing_if = "Option::is_none")]
     cipher: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     password: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     uuid: Option<String>,

@@ -102,6 +102,7 @@ impl SingboxTransformer {
                 server: None,
                 server_port: None,
                 method: None,
+                username: None,
                 password: None,
                 uuid: None,
                 security: None,
@@ -133,6 +134,7 @@ impl SingboxTransformer {
                 server: None,
                 server_port: None,
                 method: None,
+                username: None,
                 password: None,
                 uuid: None,
                 security: None,
@@ -267,6 +269,7 @@ impl SingboxTransformer {
                 server: None,
                 server_port: None,
                 method: None,
+                username: None,
                 password: None,
                 uuid: None,
                 security: None,
@@ -323,6 +326,8 @@ pub(super) struct SingboxOutbound {
     server_port: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     password: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -9,6 +9,12 @@ pub enum TransformError {
         node_name: String,
         field: &'static str,
     },
+    #[error("节点 `{node_name}` 的协议 `{protocol}` 暂不支持导出到 `{target}`")]
+    UnsupportedProtocol {
+        node_name: String,
+        protocol: &'static str,
+        target: &'static str,
+    },
     #[error("YAML 序列化失败：{0}")]
     SerializeYaml(String),
     #[error("JSON 序列化失败：{0}")]

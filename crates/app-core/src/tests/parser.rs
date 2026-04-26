@@ -97,13 +97,17 @@ vless://bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb@vless.example.com:443?type=grpc&sec
 trojan://trojan-pass@trojan.example.com:443?type=ws&sni=sni.trojan.example.com&host=edge.trojan.example.com&path=%2Ftrojan&alpn=h2%2Chttp%2F1.1&allowInsecure=true#trojan-node\n\
 hysteria2://hy2-pass@hy2.example.com:443?obfs=salamander&obfs-password=hy2-obfs&sni=sni.hy2.example.com&alpn=h3&insecure=1#hy2-node\n\
 tuic://cccccccc-cccc-cccc-cccc-cccccccccccc:tuic-pass@tuic.example.com:443?congestion_control=bbr&udp_relay_mode=native&sni=sni.tuic.example.com&alpn=h3%2Ch3-29&allow_insecure=1#tuic-node\n\
-anytls://anytls-pass@anytls.example.com:443?sni=sni.anytls.example.com&alpn=h2%2Chttp%2F1.1&fp=chrome&allowInsecure=1#anytls-node"
+anytls://anytls-pass@anytls.example.com:443?sni=sni.anytls.example.com&alpn=h2%2Chttp%2F1.1&fp=chrome&allowInsecure=1#anytls-node\n\
+socks5://socks-user:socks-pass@socks.example.com:1080#socks-node\n\
+socks5+tls://socks-tls-user:socks-tls-pass@socks-tls.example.com:1080#socks-tls-node\n\
+http://http-user:http-pass@http-proxy.example.com:8080#http-node\n\
+https://https-user:https-pass@https-proxy.example.com:8443#https-node"
     );
 
     let nodes = parser
         .parse("source-runtime-fields", &payload)
         .expect("解析带完整参数的节点应成功");
-    assert_eq!(nodes.len(), 6);
+    assert_eq!(nodes.len(), 10);
 
     let vmess = nodes
         .iter()
@@ -255,5 +259,69 @@ anytls://anytls-pass@anytls.example.com:443?sni=sni.anytls.example.com&alpn=h2%2
     assert_eq!(
         anytls.extra.get("skip_cert_verify"),
         Some(&Value::Bool(true))
+    );
+
+    let socks = nodes
+        .iter()
+        .find(|node| node.name == "socks-node")
+        .expect("应包含 socks5 节点");
+    assert_eq!(socks.protocol, ProxyProtocol::Socks5);
+    assert_eq!(socks.transport, ProxyTransport::Tcp);
+    assert!(!socks.tls.enabled);
+    assert_eq!(
+        socks.extra.get("username"),
+        Some(&Value::String("socks-user".to_string()))
+    );
+    assert_eq!(
+        socks.extra.get("password"),
+        Some(&Value::String("socks-pass".to_string()))
+    );
+
+    let socks_tls = nodes
+        .iter()
+        .find(|node| node.name == "socks-tls-node")
+        .expect("应包含 socks5+tls 节点");
+    assert_eq!(socks_tls.protocol, ProxyProtocol::Socks5);
+    assert_eq!(socks_tls.transport, ProxyTransport::Tcp);
+    assert!(socks_tls.tls.enabled);
+    assert_eq!(
+        socks_tls.extra.get("username"),
+        Some(&Value::String("socks-tls-user".to_string()))
+    );
+    assert_eq!(
+        socks_tls.extra.get("password"),
+        Some(&Value::String("socks-tls-pass".to_string()))
+    );
+
+    let http = nodes
+        .iter()
+        .find(|node| node.name == "http-node")
+        .expect("应包含 http 节点");
+    assert_eq!(http.protocol, ProxyProtocol::Http);
+    assert_eq!(http.transport, ProxyTransport::Tcp);
+    assert!(!http.tls.enabled);
+    assert_eq!(
+        http.extra.get("username"),
+        Some(&Value::String("http-user".to_string()))
+    );
+    assert_eq!(
+        http.extra.get("password"),
+        Some(&Value::String("http-pass".to_string()))
+    );
+
+    let https = nodes
+        .iter()
+        .find(|node| node.name == "https-node")
+        .expect("应包含 https 节点");
+    assert_eq!(https.protocol, ProxyProtocol::Http);
+    assert_eq!(https.transport, ProxyTransport::Tcp);
+    assert!(https.tls.enabled);
+    assert_eq!(
+        https.extra.get("username"),
+        Some(&Value::String("https-user".to_string()))
+    );
+    assert_eq!(
+        https.extra.get("password"),
+        Some(&Value::String("https-pass".to_string()))
     );
 }

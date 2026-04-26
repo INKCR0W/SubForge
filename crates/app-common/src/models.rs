@@ -181,6 +181,8 @@ pub enum ProxyProtocol {
     Tuic,
     AnyTls,
     WireGuard,
+    Socks5,
+    Http,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]

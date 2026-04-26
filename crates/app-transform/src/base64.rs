@@ -35,6 +35,16 @@ fn build_share_uri(node: &ProxyNode) -> TransformResult<String> {
         ProxyProtocol::Tuic => build_tuic_uri(node),
         ProxyProtocol::AnyTls => build_anytls_uri(node),
         ProxyProtocol::WireGuard => build_wireguard_uri(node),
+        ProxyProtocol::Socks5 => Err(TransformError::UnsupportedProtocol {
+            node_name: node.name.clone(),
+            protocol: "socks5",
+            target: "base64-uri",
+        }),
+        ProxyProtocol::Http => Err(TransformError::UnsupportedProtocol {
+            node_name: node.name.clone(),
+            protocol: "http",
+            target: "base64-uri",
+        }),
     }
 }
 

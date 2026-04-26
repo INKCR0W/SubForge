@@ -9,7 +9,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde_json::{Value, json};
 
-use super::{Base64Transformer, ClashTransformer, SingboxTransformer, Transformer};
+use super::{Base64Transformer, ClashTransformer, SingboxTransformer, TransformError, Transformer};
 
 #[test]
 fn snapshot_ss_proxy_yaml() {
@@ -539,6 +539,55 @@ fn snapshot_tuic_share_link_base64() {
         ),
         include_str!("../fixtures/base64_tuic.txt"),
         "tuic://33333333-3333-3333-3333-333333333333:tuic-pass@tuic-sg.example.com:443?congestion_control=bbr&udp_relay_mode=native&sni=tls.example.com&alpn=h3%2Ch3-29#TUIC-SG",
+    );
+}
+
+#[test]
+fn base64_transform_rejects_socks5_and_http_protocols() {
+    let profile = test_profile();
+    let socks = build_node(
+        "SOCKS-01",
+        ProxyProtocol::Socks5,
+        ProxyTransport::Tcp,
+        Some("hk"),
+        vec![
+            ("username", Value::String("socks-user".to_string())),
+            ("password", Value::String("socks-pass".to_string())),
+        ],
+    );
+    let http = build_node(
+        "HTTP-01",
+        ProxyProtocol::Http,
+        ProxyTransport::Tcp,
+        Some("us"),
+        vec![
+            ("username", Value::String("http-user".to_string())),
+            ("password", Value::String("http-pass".to_string())),
+        ],
+    );
+
+    let err = Base64Transformer
+        .transform(&[socks], &profile)
+        .expect_err("socks5 节点不应被 base64-uri 导出");
+    assert_eq!(
+        err,
+        TransformError::UnsupportedProtocol {
+            node_name: "SOCKS-01".to_string(),
+            protocol: "socks5",
+            target: "base64-uri",
+        }
+    );
+
+    let err = Base64Transformer
+        .transform(&[http], &profile)
+        .expect_err("http 节点不应被 base64-uri 导出");
+    assert_eq!(
+        err,
+        TransformError::UnsupportedProtocol {
+            node_name: "HTTP-01".to_string(),
+            protocol: "http",
+            target: "base64-uri",
+        }
     );
 }
 

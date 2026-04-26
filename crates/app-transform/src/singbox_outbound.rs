@@ -25,6 +25,7 @@ pub(super) fn build_singbox_node_outbound(node: &ProxyNode) -> TransformResult<S
         server: Some(node.server.clone()),
         server_port: Some(node.port),
         method: None,
+        username: optional_string(node, "username"),
         password: None,
         uuid: None,
         security: None,
@@ -143,6 +144,26 @@ pub(super) fn build_singbox_node_outbound(node: &ProxyNode) -> TransformResult<S
             outbound.method = None;
             outbound.server = None;
             outbound.server_port = None;
+        }
+        ProxyProtocol::Socks5 => {
+            outbound.outbound_type = "socks".to_string();
+            outbound.network = Some("tcp".to_string());
+            outbound.transport = None;
+            outbound.method = None;
+            outbound.uuid = None;
+            outbound.security = None;
+            outbound.alter_id = None;
+            outbound.flow = None;
+        }
+        ProxyProtocol::Http => {
+            outbound.outbound_type = "http".to_string();
+            outbound.network = Some("tcp".to_string());
+            outbound.transport = None;
+            outbound.method = None;
+            outbound.uuid = None;
+            outbound.security = None;
+            outbound.alter_id = None;
+            outbound.flow = None;
         }
     }
 

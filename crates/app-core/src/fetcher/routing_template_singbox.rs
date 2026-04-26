@@ -75,6 +75,8 @@ fn parse_singbox_node(
         "tuic" => ProxyProtocol::Tuic,
         "anytls" => ProxyProtocol::AnyTls,
         "wireguard" => ProxyProtocol::WireGuard,
+        "socks" => ProxyProtocol::Socks5,
+        "http" => ProxyProtocol::Http,
         _ => return Ok(None),
     };
 
@@ -87,6 +89,10 @@ fn parse_singbox_node(
     match protocol {
         ProxyProtocol::Ss => {
             insert_optional_string(&mut extra, "cipher", string_value(map.get("method")));
+            insert_optional_string(&mut extra, "password", string_value(map.get("password")));
+        }
+        ProxyProtocol::Socks5 | ProxyProtocol::Http => {
+            insert_optional_string(&mut extra, "username", string_value(map.get("username")));
             insert_optional_string(&mut extra, "password", string_value(map.get("password")));
         }
         ProxyProtocol::Ssr => {
@@ -301,6 +307,7 @@ fn validate_required_fields(
         ProxyProtocol::Tuic => &["uuid", "password"][..],
         ProxyProtocol::AnyTls => &["password"][..],
         ProxyProtocol::WireGuard => &["private_key"][..],
+        ProxyProtocol::Socks5 | ProxyProtocol::Http => &[][..],
     };
 
     for key in required {

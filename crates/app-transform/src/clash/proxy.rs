@@ -27,6 +27,7 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
         server: node.server.clone(),
         port: node.port,
         cipher: None,
+        username: optional_string(node, "username"),
         password: None,
         uuid: None,
         alter_id: None,
@@ -62,6 +63,7 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
         ProxyProtocol::Ss => {
             proxy.proxy_type = "ss".to_string();
             proxy.cipher = Some(required_string(node, "cipher")?);
+            proxy.username = None;
             proxy.password = Some(required_string(node, "password")?);
             proxy.network = Some("tcp".to_string());
             proxy.tls = None;
@@ -128,6 +130,7 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
         }
         ProxyProtocol::Trojan => {
             proxy.proxy_type = "trojan".to_string();
+            proxy.username = None;
             proxy.password = Some(required_string(node, "password")?);
             proxy.network = network;
             proxy.sni = proxy.servername.clone();
@@ -149,6 +152,7 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
         }
         ProxyProtocol::Hysteria2 => {
             proxy.proxy_type = "hysteria2".to_string();
+            proxy.username = None;
             proxy.password = Some(
                 optional_string(node, "password")
                     .or_else(|| optional_string(node, "auth"))
@@ -179,6 +183,7 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
         ProxyProtocol::Tuic => {
             proxy.proxy_type = "tuic".to_string();
             proxy.uuid = Some(required_string(node, "uuid")?);
+            proxy.username = None;
             proxy.password = Some(required_string(node, "password")?);
             proxy.network = None;
             proxy.flow = None;
@@ -200,6 +205,7 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
         }
         ProxyProtocol::AnyTls => {
             proxy.proxy_type = "anytls".to_string();
+            proxy.username = None;
             proxy.password = Some(required_string(node, "password")?);
             proxy.network = Some("tcp".to_string());
             proxy.alter_id = None;
@@ -224,6 +230,7 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
         ProxyProtocol::Ssr => {
             proxy.proxy_type = "ssr".to_string();
             proxy.cipher = Some(required_string(node, "cipher")?);
+            proxy.username = None;
             proxy.password = Some(required_string(node, "password")?);
             proxy.protocol = optional_string(node, "protocol");
             proxy.obfs = optional_string(node, "obfs");
@@ -255,6 +262,7 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
         }
         ProxyProtocol::WireGuard => {
             proxy.proxy_type = "wireguard".to_string();
+            proxy.username = None;
             proxy.network = None;
             proxy.tls = None;
             proxy.sni = None;
@@ -285,6 +293,56 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
             proxy.ipv6 = addresses.iter().find(|value| value.contains(':')).cloned();
             proxy.reserved = optional_string(node, "reserved");
             proxy.mtu = optional_u32(node, "mtu");
+        }
+        ProxyProtocol::Socks5 => {
+            proxy.proxy_type = "socks5".to_string();
+            proxy.network = Some("tcp".to_string());
+            proxy.alter_id = None;
+            proxy.cipher = None;
+            proxy.uuid = None;
+            proxy.flow = None;
+            proxy.ws_opts = None;
+            proxy.grpc_opts = None;
+            proxy.h2_opts = None;
+            proxy.obfs = None;
+            proxy.obfs_param = None;
+            proxy.protocol = None;
+            proxy.protocol_param = None;
+            proxy.obfs_password = None;
+            proxy.congestion_control = None;
+            proxy.udp_relay_mode = None;
+            proxy.private_key = None;
+            proxy.public_key = None;
+            proxy.pre_shared_key = None;
+            proxy.ip = None;
+            proxy.ipv6 = None;
+            proxy.reserved = None;
+            proxy.mtu = None;
+        }
+        ProxyProtocol::Http => {
+            proxy.proxy_type = "http".to_string();
+            proxy.network = Some("tcp".to_string());
+            proxy.alter_id = None;
+            proxy.cipher = None;
+            proxy.uuid = None;
+            proxy.flow = None;
+            proxy.ws_opts = None;
+            proxy.grpc_opts = None;
+            proxy.h2_opts = None;
+            proxy.obfs = None;
+            proxy.obfs_param = None;
+            proxy.protocol = None;
+            proxy.protocol_param = None;
+            proxy.obfs_password = None;
+            proxy.congestion_control = None;
+            proxy.udp_relay_mode = None;
+            proxy.private_key = None;
+            proxy.public_key = None;
+            proxy.pre_shared_key = None;
+            proxy.ip = None;
+            proxy.ipv6 = None;
+            proxy.reserved = None;
+            proxy.mtu = None;
         }
     }
 

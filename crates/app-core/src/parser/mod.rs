@@ -7,6 +7,7 @@ mod anytls;
 mod base64;
 mod common;
 mod hysteria2;
+mod socks_http;
 mod ss;
 mod ssr;
 mod trojan;
@@ -18,6 +19,7 @@ mod wireguard;
 use anytls::parse_anytls_uri;
 use base64::try_decode_base64_text;
 use hysteria2::parse_hysteria2_uri;
+use socks_http::{parse_http_proxy_uri, parse_socks5_uri};
 use ss::parse_ss_uri;
 use ssr::parse_ssr_uri;
 use trojan::parse_trojan_uri;
@@ -95,6 +97,10 @@ pub(crate) fn looks_like_uri_list(payload: &str) -> bool {
         || payload.contains("tuic://")
         || payload.contains("anytls://")
         || payload.contains("wireguard://")
+        || payload.contains("socks5://")
+        || payload.contains("socks5+tls://")
+        || payload.contains("http://")
+        || payload.contains("https://")
 }
 
 pub(crate) fn parse_proxy_uri_line(
@@ -128,6 +134,12 @@ pub(crate) fn parse_proxy_uri_line(
     }
     if line.starts_with("wireguard://") {
         return parse_wireguard_uri(line, source_id, updated_at);
+    }
+    if line.starts_with("socks5://") || line.starts_with("socks5+tls://") {
+        return parse_socks5_uri(line, source_id, updated_at);
+    }
+    if line.starts_with("http://") || line.starts_with("https://") {
+        return parse_http_proxy_uri(line, source_id, updated_at);
     }
 
     Err(CoreError::SubscriptionParse(format!(
