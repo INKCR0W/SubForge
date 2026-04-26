@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use app_common::{ProxyNode, ProxyProtocol, ProxyTransport, TlsConfig};
 use serde_json::Value as JsonValue;
 
-use crate::parser::build_proxy_node;
+use crate::parser::{build_proxy_node, parse_host_port};
 use crate::utils::now_rfc3339;
 use crate::{CoreError, CoreResult};
 
@@ -79,8 +79,7 @@ fn parse_singbox_node(
     };
 
     let name = required_string(map.get("tag"), "tag")?;
-    let server = required_string(map.get("server"), "server")?;
-    let port = required_u16(map.get("server_port"), "server_port")?;
+    let (server, port) = resolve_endpoint(&protocol, map)?;
     let tls = parse_singbox_tls(map.get("tls"));
     let transport = resolve_transport(&protocol, map.get("transport"));
 
@@ -223,6 +222,36 @@ fn parse_singbox_node(
     Ok(Some(build_proxy_node(
         source_id, name, protocol, server, port, transport, tls, extra, updated_at,
     )))
+}
+
+fn resolve_endpoint(
+    protocol: &ProxyProtocol,
+    map: &serde_json::Map<String, JsonValue>,
+) -> CoreResult<(String, u16)> {
+    if !matches!(protocol, ProxyProtocol::WireGuard) {
+        let server = required_string(map.get("server"), "server")?;
+        let port = required_u16(map.get("server_port"), "server_port")?;
+        return Ok((server, port));
+    }
+
+    let server = string_value(map.get("server"));
+    let port = map
+        .get("server_port")
+        .and_then(|value| required_u16(Some(value), "server_port").ok());
+    if let (Some(server), Some(port)) = (server, port) {
+        return Ok((server, port));
+    }
+
+    let peer = string_list_value(map.get("peers"))
+        .and_then(|items| items.into_iter().next())
+        .ok_or_else(|| {
+            CoreError::SubscriptionParse(
+                "sing-box 节点缺少必要字段：server/server_port 或 peers (wireguard)".to_string(),
+            )
+        })?;
+    parse_host_port(&peer).map_err(|_| {
+        CoreError::SubscriptionParse("sing-box wireguard peers 首项必须是 host:port".to_string())
+    })
 }
 
 fn parse_singbox_tls(value: Option<&JsonValue>) -> TlsConfig {

@@ -593,6 +593,55 @@ proxy-groups:
 }
 
 #[test]
+fn static_fetcher_parses_wireguard_singbox_nodes_without_server_fields() {
+    let db = Database::open_in_memory().expect("内存数据库初始化失败");
+    let source_repository = SourceRepository::new(&db);
+    source_repository
+        .insert(&sample_source(
+            "source-fetch-parser-singbox-wireguard",
+            "subforge.builtin.static",
+        ))
+        .expect("写入来源实例失败");
+
+    let parse_calls = Arc::new(AtomicUsize::new(0));
+    let fetcher = StaticFetcher::with_parser(
+        &db,
+        CountingParser {
+            parse_calls: parse_calls.clone(),
+        },
+    )
+    .expect("初始化 StaticFetcher 失败");
+
+    let payload = r#"
+{
+  "outbounds": [
+    {
+      "type": "wireguard",
+      "tag": "wg-node-a",
+      "private_key": "wg-private-key",
+      "peers": ["wg-sg.example.com:51820"],
+      "local_address": ["10.0.0.2/32"]
+    }
+  ]
+}
+"#;
+    let nodes = fetcher
+        .parse_and_cache_content("source-fetch-parser-singbox-wireguard", payload)
+        .expect("sing-box WireGuard 内容解析应成功");
+
+    assert_eq!(nodes.len(), 1, "WireGuard sing-box 节点应被直接解析");
+    assert_eq!(nodes[0].protocol, ProxyProtocol::WireGuard);
+    assert_eq!(nodes[0].name, "wg-node-a");
+    assert_eq!(nodes[0].server, "wg-sg.example.com");
+    assert_eq!(nodes[0].port, 51820);
+    assert_eq!(
+        parse_calls.load(Ordering::SeqCst),
+        0,
+        "sing-box payload 命中时不应进入 URI 解析器"
+    );
+}
+
+#[test]
 fn static_fetcher_uses_uri_parser_when_payload_is_not_routing_template() {
     let db = Database::open_in_memory().expect("内存数据库初始化失败");
     let source_repository = SourceRepository::new(&db);
