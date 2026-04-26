@@ -1,0 +1,37 @@
+{
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "select",
+      "outbounds": [
+        "auto",
+        "WG-SG"
+      ],
+      "default": "auto"
+    },
+    {
+      "type": "urltest",
+      "tag": "auto",
+      "outbounds": [
+        "WG-SG"
+      ],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": "5m",
+      "tolerance": 50
+    },
+    {
+      "type": "wireguard",
+      "tag": "WG-SG",
+      "private_key": "wg-private-key",
+      "peers": [
+        "wg-sg.example.com:51820"
+      ],
+      "local_address": [
+        "10.0.0.2/32",
+        "fd00::2/128"
+      ],
+      "reserved": "1,2,3",
+      "mtu": 1420
+    }
+  ]
+}

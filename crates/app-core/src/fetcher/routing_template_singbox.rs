@@ -67,12 +67,14 @@ fn parse_singbox_node(
     let protocol = match outbound_type.as_str() {
         "selector" | "urltest" => return Ok(None),
         "shadowsocks" => ProxyProtocol::Ss,
+        "shadowsocksr" => ProxyProtocol::Ssr,
         "vmess" => ProxyProtocol::Vmess,
         "vless" => ProxyProtocol::Vless,
         "trojan" => ProxyProtocol::Trojan,
         "hysteria2" => ProxyProtocol::Hysteria2,
         "tuic" => ProxyProtocol::Tuic,
         "anytls" => ProxyProtocol::AnyTls,
+        "wireguard" => ProxyProtocol::WireGuard,
         _ => return Ok(None),
     };
 
@@ -87,6 +89,30 @@ fn parse_singbox_node(
         ProxyProtocol::Ss => {
             insert_optional_string(&mut extra, "cipher", string_value(map.get("method")));
             insert_optional_string(&mut extra, "password", string_value(map.get("password")));
+        }
+        ProxyProtocol::Ssr => {
+            insert_optional_string(&mut extra, "cipher", string_value(map.get("method")));
+            insert_optional_string(&mut extra, "password", string_value(map.get("password")));
+            insert_optional_string(&mut extra, "protocol", string_value(map.get("protocol")));
+            insert_optional_string(
+                &mut extra,
+                "protocol_param",
+                string_value(map.get("protocol_param")),
+            );
+            insert_optional_string(&mut extra, "obfs", string_value(map.get("obfs")));
+            insert_optional_string(
+                &mut extra,
+                "obfs_param",
+                string_value(map.get("obfs_param")),
+            );
+            if let Some(obfs) = map.get("obfs").and_then(JsonValue::as_object) {
+                insert_optional_string(&mut extra, "obfs", string_value(obfs.get("type")));
+                insert_optional_string(
+                    &mut extra,
+                    "obfs_param",
+                    string_value(obfs.get("password")),
+                );
+            }
         }
         ProxyProtocol::Vmess => {
             insert_optional_string(&mut extra, "uuid", string_value(map.get("uuid")));
@@ -131,6 +157,21 @@ fn parse_singbox_node(
         }
         ProxyProtocol::AnyTls => {
             insert_optional_string(&mut extra, "password", string_value(map.get("password")));
+        }
+        ProxyProtocol::WireGuard => {
+            insert_optional_string(
+                &mut extra,
+                "private_key",
+                string_value(map.get("private_key")),
+            );
+            insert_optional_string_list(&mut extra, "peers", string_list_value(map.get("peers")));
+            insert_optional_string_list(
+                &mut extra,
+                "local_address",
+                string_list_value(map.get("local_address")),
+            );
+            insert_optional_string(&mut extra, "reserved", string_value(map.get("reserved")));
+            insert_optional_u64(&mut extra, "mtu", u64_value(map.get("mtu")));
         }
     }
 
@@ -223,12 +264,14 @@ fn validate_required_fields(
 ) -> CoreResult<()> {
     let required = match protocol {
         ProxyProtocol::Ss => &["cipher", "password"][..],
+        ProxyProtocol::Ssr => &["cipher", "password"][..],
         ProxyProtocol::Vmess => &["uuid"][..],
         ProxyProtocol::Vless => &["uuid"][..],
         ProxyProtocol::Trojan => &["password"][..],
         ProxyProtocol::Hysteria2 => &["password"][..],
         ProxyProtocol::Tuic => &["uuid", "password"][..],
         ProxyProtocol::AnyTls => &["password"][..],
+        ProxyProtocol::WireGuard => &["private_key"][..],
     };
 
     for key in required {

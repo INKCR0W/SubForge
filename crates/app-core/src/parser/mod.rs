@@ -8,19 +8,23 @@ mod base64;
 mod common;
 mod hysteria2;
 mod ss;
+mod ssr;
 mod trojan;
 mod tuic;
 mod vless;
 mod vmess;
+mod wireguard;
 
 use anytls::parse_anytls_uri;
 use base64::try_decode_base64_text;
 use hysteria2::parse_hysteria2_uri;
 use ss::parse_ss_uri;
+use ssr::parse_ssr_uri;
 use trojan::parse_trojan_uri;
 use tuic::parse_tuic_uri;
 use vless::parse_vless_uri;
 use vmess::parse_vmess_uri;
+use wireguard::parse_wireguard_uri;
 
 pub trait SubscriptionParser {
     fn parse(&self, source_id: &str, payload: &str) -> CoreResult<Vec<ProxyNode>>;
@@ -83,12 +87,14 @@ pub(crate) fn normalize_subscription_payload(payload: &str) -> String {
 
 pub(crate) fn looks_like_uri_list(payload: &str) -> bool {
     payload.contains("ss://")
+        || payload.contains("ssr://")
         || payload.contains("vmess://")
         || payload.contains("vless://")
         || payload.contains("trojan://")
         || payload.contains("hysteria2://")
         || payload.contains("tuic://")
         || payload.contains("anytls://")
+        || payload.contains("wireguard://")
 }
 
 pub(crate) fn parse_proxy_uri_line(
@@ -98,6 +104,9 @@ pub(crate) fn parse_proxy_uri_line(
 ) -> CoreResult<ProxyNode> {
     if line.starts_with("ss://") {
         return parse_ss_uri(line, source_id, updated_at);
+    }
+    if line.starts_with("ssr://") {
+        return parse_ssr_uri(line, source_id, updated_at);
     }
     if line.starts_with("vmess://") {
         return parse_vmess_uri(line, source_id, updated_at);
@@ -117,6 +126,9 @@ pub(crate) fn parse_proxy_uri_line(
     if line.starts_with("anytls://") {
         return parse_anytls_uri(line, source_id, updated_at);
     }
+    if line.starts_with("wireguard://") {
+        return parse_wireguard_uri(line, source_id, updated_at);
+    }
 
     Err(CoreError::SubscriptionParse(format!(
         "不支持的 URI 协议：{line}"
@@ -124,5 +136,6 @@ pub(crate) fn parse_proxy_uri_line(
 }
 
 pub(crate) use common::{
-    build_proxy_node, decode_percent_encoded, map_transport, parse_host_port, split_fragment,
+    build_proxy_node, build_proxy_node_id, decode_percent_encoded, map_transport, parse_host_port,
+    split_fragment,
 };

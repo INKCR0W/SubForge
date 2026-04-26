@@ -33,17 +33,19 @@ fn uri_list_parser_handles_invalid_protocol_lines_without_failing() {
 }
 
 #[test]
-fn uri_list_parser_supports_base64_hysteria2_tuic_anytls_lines() {
+fn uri_list_parser_supports_base64_hysteria2_tuic_anytls_ssr_wireguard_lines() {
     let parser = UriListParser;
     let payload = "hysteria2://hy2-pass@hy2.example.com:443?sni=sni.hy2.example.com#hy2-node\n\
 tuic://cccccccc-cccc-cccc-cccc-cccccccccccc:tuic-pass@tuic.example.com:443?sni=sni.tuic.example.com#tuic-node\n\
-anytls://anytls-pass@anytls.example.com:443?sni=sni.anytls.example.com#anytls-node";
+anytls://anytls-pass@anytls.example.com:443?sni=sni.anytls.example.com#anytls-node\n\
+ssr://c3NyLmV4YW1wbGUuY29tOjQ0MzpvcmlnaW46YWVzLTI1Ni1nY206cGxhaW46YzNOeUxYQmhjM009Lz9yZW1hcmtzPVUxTlNMVWhM\n\
+wireguard://wg-private-key@wg.example.com:51820?publickey=wg-public-key&address=10.0.0.2%2F32&peer=wg.example.com%3A51820#WG-SG";
     let encoded = BASE64_STANDARD.encode(payload);
 
     let nodes = parser
         .parse("source-new-schemes", &encoded)
         .expect("解析包含新协议的 Base64 订阅应成功");
-    assert_eq!(nodes.len(), 3);
+    assert_eq!(nodes.len(), 5);
 
     let protocols = nodes
         .iter()
@@ -52,6 +54,8 @@ anytls://anytls-pass@anytls.example.com:443?sni=sni.anytls.example.com#anytls-no
     assert!(protocols.contains(&ProxyProtocol::Hysteria2));
     assert!(protocols.contains(&ProxyProtocol::Tuic));
     assert!(protocols.contains(&ProxyProtocol::AnyTls));
+    assert!(protocols.contains(&ProxyProtocol::Ssr));
+    assert!(protocols.contains(&ProxyProtocol::WireGuard));
 }
 
 #[test]

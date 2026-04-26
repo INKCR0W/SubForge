@@ -283,6 +283,12 @@ pub(super) struct ClashProxy {
     alpn: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     obfs: Option<String>,
+    #[serde(rename = "obfs-param", skip_serializing_if = "Option::is_none")]
+    obfs_param: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    protocol: Option<String>,
+    #[serde(rename = "protocol-param", skip_serializing_if = "Option::is_none")]
+    protocol_param: Option<String>,
     #[serde(rename = "obfs-password", skip_serializing_if = "Option::is_none")]
     obfs_password: Option<String>,
     #[serde(
@@ -292,6 +298,20 @@ pub(super) struct ClashProxy {
     congestion_control: Option<String>,
     #[serde(rename = "udp-relay-mode", skip_serializing_if = "Option::is_none")]
     udp_relay_mode: Option<String>,
+    #[serde(rename = "private-key", skip_serializing_if = "Option::is_none")]
+    private_key: Option<String>,
+    #[serde(rename = "public-key", skip_serializing_if = "Option::is_none")]
+    public_key: Option<String>,
+    #[serde(rename = "pre-shared-key", skip_serializing_if = "Option::is_none")]
+    pre_shared_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ipv6: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reserved: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mtu: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]

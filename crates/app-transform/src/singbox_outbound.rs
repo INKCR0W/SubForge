@@ -34,6 +34,14 @@ pub(super) fn build_singbox_node_outbound(node: &ProxyNode) -> TransformResult<S
         tls,
         transport: None,
         obfs: None,
+        protocol: None,
+        protocol_param: None,
+        obfs_param: None,
+        private_key: None,
+        peers: None,
+        local_address: None,
+        reserved: None,
+        mtu: None,
         congestion_control: None,
         udp_relay_mode: None,
     };
@@ -43,6 +51,21 @@ pub(super) fn build_singbox_node_outbound(node: &ProxyNode) -> TransformResult<S
             outbound.outbound_type = "shadowsocks".to_string();
             outbound.method = Some(required_string(node, "cipher")?);
             outbound.password = Some(required_string(node, "password")?);
+            outbound.tls = None;
+            outbound.transport = None;
+        }
+        ProxyProtocol::Ssr => {
+            outbound.outbound_type = "shadowsocksr".to_string();
+            outbound.method = Some(required_string(node, "cipher")?);
+            outbound.password = Some(required_string(node, "password")?);
+            outbound.protocol = optional_string(node, "protocol");
+            outbound.protocol_param = optional_string(node, "protocol_param");
+            outbound.obfs = optional_string(node, "obfs").map(|obfs_type| SingboxObfs {
+                obfs_type,
+                password: optional_string(node, "obfs_param"),
+            });
+            outbound.obfs_param = optional_string(node, "obfs_param");
+            outbound.network = Some("tcp".to_string());
             outbound.tls = None;
             outbound.transport = None;
         }
@@ -101,6 +124,25 @@ pub(super) fn build_singbox_node_outbound(node: &ProxyNode) -> TransformResult<S
             outbound.password = Some(required_string(node, "password")?);
             outbound.network = Some("tcp".to_string());
             outbound.transport = None;
+        }
+        ProxyProtocol::WireGuard => {
+            outbound.outbound_type = "wireguard".to_string();
+            outbound.private_key = Some(required_string(node, "private_key")?);
+            outbound.peers = optional_string_list(node, "peers");
+            outbound.local_address = optional_string_list(node, "local_address");
+            outbound.reserved = optional_string(node, "reserved");
+            outbound.mtu = optional_u32(node, "mtu");
+            outbound.tls = None;
+            outbound.transport = None;
+            outbound.network = None;
+            outbound.password = None;
+            outbound.uuid = None;
+            outbound.security = None;
+            outbound.alter_id = None;
+            outbound.flow = None;
+            outbound.method = None;
+            outbound.server = None;
+            outbound.server_port = None;
         }
     }
 

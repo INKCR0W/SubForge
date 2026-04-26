@@ -1,0 +1,39 @@
+{
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "select",
+      "outbounds": [
+        "auto",
+        "SSR-HK"
+      ],
+      "default": "auto"
+    },
+    {
+      "type": "urltest",
+      "tag": "auto",
+      "outbounds": [
+        "SSR-HK"
+      ],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": "5m",
+      "tolerance": 50
+    },
+    {
+      "type": "shadowsocksr",
+      "tag": "SSR-HK",
+      "server": "ssr-hk.example.com",
+      "server_port": 443,
+      "method": "aes-256-gcm",
+      "password": "ssr-pass",
+      "network": "tcp",
+      "obfs": {
+        "type": "plain",
+        "password": "obfs-param"
+      },
+      "protocol": "origin",
+      "protocol_param": "proto-param",
+      "obfs_param": "obfs-param"
+    }
+  ]
+}

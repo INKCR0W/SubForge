@@ -111,6 +111,14 @@ impl SingboxTransformer {
                 tls: None,
                 transport: None,
                 obfs: None,
+                protocol: None,
+                protocol_param: None,
+                obfs_param: None,
+                private_key: None,
+                peers: None,
+                local_address: None,
+                reserved: None,
+                mtu: None,
                 congestion_control: None,
                 udp_relay_mode: None,
             },
@@ -134,6 +142,14 @@ impl SingboxTransformer {
                 tls: None,
                 transport: None,
                 obfs: None,
+                protocol: None,
+                protocol_param: None,
+                obfs_param: None,
+                private_key: None,
+                peers: None,
+                local_address: None,
+                reserved: None,
+                mtu: None,
                 congestion_control: None,
                 udp_relay_mode: None,
             },
@@ -260,6 +276,14 @@ impl SingboxTransformer {
                 tls: None,
                 transport: None,
                 obfs: None,
+                protocol: None,
+                protocol_param: None,
+                obfs_param: None,
+                private_key: None,
+                peers: None,
+                local_address: None,
+                reserved: None,
+                mtu: None,
                 congestion_control: None,
                 udp_relay_mode: None,
             });
@@ -317,6 +341,22 @@ pub(super) struct SingboxOutbound {
     transport: Option<SingboxTransport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     obfs: Option<SingboxObfs>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    protocol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    protocol_param: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    obfs_param: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    private_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peers: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_address: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reserved: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mtu: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     congestion_control: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

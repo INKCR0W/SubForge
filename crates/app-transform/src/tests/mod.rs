@@ -29,6 +29,27 @@ fn snapshot_ss_proxy_yaml() {
 }
 
 #[test]
+fn snapshot_ssr_proxy_yaml() {
+    assert_snapshot(
+        build_node(
+            "SSR-HK",
+            ProxyProtocol::Ssr,
+            ProxyTransport::Tcp,
+            Some("hk"),
+            vec![
+                ("cipher", Value::String("aes-256-gcm".to_string())),
+                ("password", Value::String("ssr-pass".to_string())),
+                ("protocol", Value::String("origin".to_string())),
+                ("obfs", Value::String("plain".to_string())),
+                ("obfs_param", Value::String("obfs-param".to_string())),
+                ("protocol_param", Value::String("proto-param".to_string())),
+            ],
+        ),
+        include_str!("../fixtures/clash_ssr.yaml"),
+    );
+}
+
+#[test]
 fn snapshot_vmess_proxy_yaml() {
     assert_snapshot(
         build_node(
@@ -100,6 +121,31 @@ fn snapshot_hysteria2_proxy_yaml() {
             ],
         ),
         include_str!("../fixtures/clash_hysteria2.yaml"),
+    );
+}
+
+#[test]
+fn snapshot_wireguard_proxy_yaml() {
+    assert_snapshot(
+        build_node(
+            "WG-SG",
+            ProxyProtocol::WireGuard,
+            ProxyTransport::Tcp,
+            Some("sg"),
+            vec![
+                ("private_key", Value::String("wg-private-key".to_string())),
+                ("public_key", Value::String("wg-public-key".to_string())),
+                (
+                    "preshared_key",
+                    Value::String("wg-preshared-key".to_string()),
+                ),
+                ("local_address", json!(["10.0.0.2/32", "fd00::2/128"])),
+                ("peers", json!(["wg-sg.example.com:51820"])),
+                ("reserved", Value::String("1,2,3".to_string())),
+                ("mtu", Value::Number(1420u64.into())),
+            ],
+        ),
+        include_str!("../fixtures/clash_wireguard.yaml"),
     );
 }
 
@@ -184,6 +230,27 @@ fn snapshot_ss_outbound_json() {
 }
 
 #[test]
+fn snapshot_ssr_outbound_json() {
+    assert_json_snapshot(
+        build_node(
+            "SSR-HK",
+            ProxyProtocol::Ssr,
+            ProxyTransport::Tcp,
+            Some("hk"),
+            vec![
+                ("cipher", Value::String("aes-256-gcm".to_string())),
+                ("password", Value::String("ssr-pass".to_string())),
+                ("protocol", Value::String("origin".to_string())),
+                ("obfs", Value::String("plain".to_string())),
+                ("obfs_param", Value::String("obfs-param".to_string())),
+                ("protocol_param", Value::String("proto-param".to_string())),
+            ],
+        ),
+        include_str!("../fixtures/singbox_ssr.json"),
+    );
+}
+
+#[test]
 fn snapshot_vmess_outbound_json() {
     assert_json_snapshot(
         build_node(
@@ -259,6 +326,31 @@ fn snapshot_hysteria2_outbound_json() {
 }
 
 #[test]
+fn snapshot_wireguard_outbound_json() {
+    assert_json_snapshot(
+        build_node(
+            "WG-SG",
+            ProxyProtocol::WireGuard,
+            ProxyTransport::Tcp,
+            Some("sg"),
+            vec![
+                ("private_key", Value::String("wg-private-key".to_string())),
+                ("public_key", Value::String("wg-public-key".to_string())),
+                (
+                    "preshared_key",
+                    Value::String("wg-preshared-key".to_string()),
+                ),
+                ("local_address", json!(["10.0.0.2/32", "fd00::2/128"])),
+                ("peers", json!(["wg-sg.example.com:51820"])),
+                ("reserved", Value::String("1,2,3".to_string())),
+                ("mtu", Value::Number(1420u64.into())),
+            ],
+        ),
+        include_str!("../fixtures/singbox_wireguard.json"),
+    );
+}
+
+#[test]
 fn snapshot_tuic_outbound_json() {
     assert_json_snapshot(
         build_node(
@@ -296,6 +388,28 @@ fn snapshot_ss_share_link_base64() {
         ),
         include_str!("../fixtures/base64_ss.txt"),
         "ss://YWVzLTEyOC1nY206cEBzcw@ss-hk.example.com:443#SS-HK",
+    );
+}
+
+#[test]
+fn snapshot_ssr_share_link_base64() {
+    assert_base64_snapshot(
+        build_node(
+            "SSR-HK",
+            ProxyProtocol::Ssr,
+            ProxyTransport::Tcp,
+            Some("hk"),
+            vec![
+                ("cipher", Value::String("aes-256-gcm".to_string())),
+                ("password", Value::String("ssr-pass".to_string())),
+                ("protocol", Value::String("origin".to_string())),
+                ("obfs", Value::String("plain".to_string())),
+                ("obfs_param", Value::String("obfs-param".to_string())),
+                ("protocol_param", Value::String("proto-param".to_string())),
+            ],
+        ),
+        include_str!("../fixtures/base64_ssr.txt"),
+        "ssr://c3NyLWhrLmV4YW1wbGUuY29tOjQ0MzpvcmlnaW46YWVzLTI1Ni1nY206cGxhaW46YzNOeUxYQmhjM00vP29iZnNwYXJhbT1iMkptY3kxd1lYSmhiUSZwcm90b3BhcmFtPWNISnZkRzh0Y0dGeVlXMCZyZW1hcmtzPVUxTlNMVWhM",
     );
 }
 
@@ -375,6 +489,32 @@ fn snapshot_hysteria2_share_link_base64() {
         ),
         include_str!("../fixtures/base64_hysteria2.txt"),
         "hysteria2://hy2-pass@hy2-hk.example.com:443?obfs=salamander&obfs-password=hy2-obfs&sni=tls.example.com&alpn=h3#HY2-HK",
+    );
+}
+
+#[test]
+fn snapshot_wireguard_share_link_base64() {
+    assert_base64_snapshot(
+        build_node(
+            "WG-SG",
+            ProxyProtocol::WireGuard,
+            ProxyTransport::Tcp,
+            Some("sg"),
+            vec![
+                ("private_key", Value::String("wg-private-key".to_string())),
+                ("public_key", Value::String("wg-public-key".to_string())),
+                (
+                    "preshared_key",
+                    Value::String("wg-preshared-key".to_string()),
+                ),
+                ("local_address", json!(["10.0.0.2/32", "fd00::2/128"])),
+                ("peers", json!(["wg-sg.example.com:51820"])),
+                ("reserved", Value::String("1,2,3".to_string())),
+                ("mtu", Value::Number(1420u64.into())),
+            ],
+        ),
+        include_str!("../fixtures/base64_wireguard.txt"),
+        "wireguard://wg-private-key@wg-sg.example.com:51820?publickey=wg-public-key&presharedkey=wg-preshared-key&reserved=1%2C2%2C3&mtu=1420&address=10.0.0.2%2F32%2Cfd00%3A%3A2%2F128&peer=wg-sg.example.com%3A51820#WG-SG",
     );
 }
 
@@ -1006,12 +1146,18 @@ fn build_node(
         extra.insert(key.to_string(), value);
     }
 
+    let port = if matches!(protocol, ProxyProtocol::WireGuard) {
+        51820
+    } else {
+        443
+    };
+
     ProxyNode {
         id: format!("node-{name}"),
         name: name.to_string(),
         protocol,
         server: format!("{}.example.com", name.to_ascii_lowercase()),
-        port: 443,
+        port,
         transport,
         tls: TlsConfig {
             enabled: true,

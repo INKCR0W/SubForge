@@ -1,0 +1,31 @@
+proxies:
+- name: SSR-HK
+  type: ssr
+  server: ssr-hk.example.com
+  port: 443
+  cipher: aes-256-gcm
+  password: ssr-pass
+  udp: true
+  network: tcp
+  obfs: plain
+  obfs-param: obfs-param
+  protocol: origin
+  protocol-param: proto-param
+proxy-groups:
+- name: Select
+  type: select
+  proxies:
+  - Auto
+  - HK
+  - SSR-HK
+- name: Auto
+  type: url-test
+  proxies:
+  - SSR-HK
+  url: http://www.gstatic.com/generate_204
+  interval: 300
+  tolerance: 50
+- name: HK
+  type: select
+  proxies:
+  - SSR-HK

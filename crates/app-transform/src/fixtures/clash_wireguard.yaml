@@ -1,0 +1,31 @@
+proxies:
+- name: WG-SG
+  type: wireguard
+  server: wg-sg.example.com
+  port: 51820
+  udp: true
+  private-key: wg-private-key
+  public-key: wg-public-key
+  pre-shared-key: wg-preshared-key
+  ip: 10.0.0.2/32
+  ipv6: fd00::2/128
+  reserved: 1,2,3
+  mtu: 1420
+proxy-groups:
+- name: Select
+  type: select
+  proxies:
+  - Auto
+  - SG
+  - WG-SG
+- name: Auto
+  type: url-test
+  proxies:
+  - WG-SG
+  url: http://www.gstatic.com/generate_204
+  interval: 300
+  tolerance: 50
+- name: SG
+  type: select
+  proxies:
+  - WG-SG

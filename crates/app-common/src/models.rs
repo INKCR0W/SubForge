@@ -173,12 +173,14 @@ pub struct AppSetting {
 #[serde(rename_all = "snake_case")]
 pub enum ProxyProtocol {
     Ss,
+    Ssr,
     Vmess,
     Vless,
     Trojan,
     Hysteria2,
     Tuic,
     AnyTls,
+    WireGuard,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]

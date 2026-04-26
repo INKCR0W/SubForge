@@ -43,9 +43,19 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
         h2_opts,
         alpn: optional_string_list(node, "alpn"),
         obfs: optional_string(node, "obfs"),
+        obfs_param: optional_string(node, "obfs_param"),
+        protocol: optional_string(node, "protocol"),
+        protocol_param: optional_string(node, "protocol_param"),
         obfs_password: optional_string(node, "obfs_password"),
         congestion_control: optional_string(node, "congestion_control"),
         udp_relay_mode: optional_string(node, "udp_relay_mode"),
+        private_key: optional_string(node, "private_key"),
+        public_key: optional_string(node, "public_key"),
+        pre_shared_key: optional_string(node, "preshared_key"),
+        ip: None,
+        ipv6: None,
+        reserved: optional_string(node, "reserved"),
+        mtu: optional_u32(node, "mtu"),
     };
 
     match node.protocol {
@@ -64,9 +74,19 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
             proxy.client_fingerprint = None;
             proxy.alpn = None;
             proxy.obfs = None;
+            proxy.obfs_param = None;
+            proxy.protocol = None;
+            proxy.protocol_param = None;
             proxy.obfs_password = None;
             proxy.congestion_control = None;
             proxy.udp_relay_mode = None;
+            proxy.private_key = None;
+            proxy.public_key = None;
+            proxy.pre_shared_key = None;
+            proxy.ip = None;
+            proxy.ipv6 = None;
+            proxy.reserved = None;
+            proxy.mtu = None;
         }
         ProxyProtocol::Vmess => {
             proxy.proxy_type = "vmess".to_string();
@@ -75,6 +95,17 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
             proxy.cipher = optional_string(node, "cipher").or(Some("auto".to_string()));
             proxy.network = network;
             proxy.flow = None;
+            proxy.obfs = None;
+            proxy.obfs_param = None;
+            proxy.protocol = None;
+            proxy.protocol_param = None;
+            proxy.private_key = None;
+            proxy.public_key = None;
+            proxy.pre_shared_key = None;
+            proxy.ip = None;
+            proxy.ipv6 = None;
+            proxy.reserved = None;
+            proxy.mtu = None;
         }
         ProxyProtocol::Vless => {
             proxy.proxy_type = "vless".to_string();
@@ -83,6 +114,17 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
             proxy.flow = optional_string(node, "flow");
             proxy.alter_id = None;
             proxy.cipher = None;
+            proxy.obfs = None;
+            proxy.obfs_param = None;
+            proxy.protocol = None;
+            proxy.protocol_param = None;
+            proxy.private_key = None;
+            proxy.public_key = None;
+            proxy.pre_shared_key = None;
+            proxy.ip = None;
+            proxy.ipv6 = None;
+            proxy.reserved = None;
+            proxy.mtu = None;
         }
         ProxyProtocol::Trojan => {
             proxy.proxy_type = "trojan".to_string();
@@ -93,6 +135,17 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
             proxy.cipher = None;
             proxy.uuid = None;
             proxy.flow = None;
+            proxy.obfs = None;
+            proxy.obfs_param = None;
+            proxy.protocol = None;
+            proxy.protocol_param = None;
+            proxy.private_key = None;
+            proxy.public_key = None;
+            proxy.pre_shared_key = None;
+            proxy.ip = None;
+            proxy.ipv6 = None;
+            proxy.reserved = None;
+            proxy.mtu = None;
         }
         ProxyProtocol::Hysteria2 => {
             proxy.proxy_type = "hysteria2".to_string();
@@ -112,6 +165,16 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
             proxy.grpc_opts = None;
             proxy.h2_opts = None;
             proxy.ws_opts = None;
+            proxy.obfs_param = None;
+            proxy.protocol = None;
+            proxy.protocol_param = None;
+            proxy.private_key = None;
+            proxy.public_key = None;
+            proxy.pre_shared_key = None;
+            proxy.ip = None;
+            proxy.ipv6 = None;
+            proxy.reserved = None;
+            proxy.mtu = None;
         }
         ProxyProtocol::Tuic => {
             proxy.proxy_type = "tuic".to_string();
@@ -124,6 +187,16 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
             proxy.grpc_opts = None;
             proxy.h2_opts = None;
             proxy.ws_opts = None;
+            proxy.obfs_param = None;
+            proxy.protocol = None;
+            proxy.protocol_param = None;
+            proxy.private_key = None;
+            proxy.public_key = None;
+            proxy.pre_shared_key = None;
+            proxy.ip = None;
+            proxy.ipv6 = None;
+            proxy.reserved = None;
+            proxy.mtu = None;
         }
         ProxyProtocol::AnyTls => {
             proxy.proxy_type = "anytls".to_string();
@@ -136,6 +209,82 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
             proxy.grpc_opts = None;
             proxy.h2_opts = None;
             proxy.ws_opts = None;
+            proxy.obfs = None;
+            proxy.obfs_param = None;
+            proxy.protocol = None;
+            proxy.protocol_param = None;
+            proxy.private_key = None;
+            proxy.public_key = None;
+            proxy.pre_shared_key = None;
+            proxy.ip = None;
+            proxy.ipv6 = None;
+            proxy.reserved = None;
+            proxy.mtu = None;
+        }
+        ProxyProtocol::Ssr => {
+            proxy.proxy_type = "ssr".to_string();
+            proxy.cipher = Some(required_string(node, "cipher")?);
+            proxy.password = Some(required_string(node, "password")?);
+            proxy.protocol = optional_string(node, "protocol");
+            proxy.obfs = optional_string(node, "obfs");
+            proxy.obfs_param = optional_string(node, "obfs_param");
+            proxy.protocol_param = optional_string(node, "protocol_param");
+            proxy.network = Some("tcp".to_string());
+            proxy.tls = None;
+            proxy.sni = None;
+            proxy.servername = None;
+            proxy.alter_id = None;
+            proxy.uuid = None;
+            proxy.flow = None;
+            proxy.ws_opts = None;
+            proxy.grpc_opts = None;
+            proxy.h2_opts = None;
+            proxy.skip_cert_verify = None;
+            proxy.client_fingerprint = None;
+            proxy.alpn = None;
+            proxy.obfs_password = None;
+            proxy.congestion_control = None;
+            proxy.udp_relay_mode = None;
+            proxy.private_key = None;
+            proxy.public_key = None;
+            proxy.pre_shared_key = None;
+            proxy.ip = None;
+            proxy.ipv6 = None;
+            proxy.reserved = None;
+            proxy.mtu = None;
+        }
+        ProxyProtocol::WireGuard => {
+            proxy.proxy_type = "wireguard".to_string();
+            proxy.network = None;
+            proxy.tls = None;
+            proxy.sni = None;
+            proxy.servername = None;
+            proxy.password = None;
+            proxy.uuid = None;
+            proxy.flow = None;
+            proxy.alter_id = None;
+            proxy.cipher = None;
+            proxy.ws_opts = None;
+            proxy.grpc_opts = None;
+            proxy.h2_opts = None;
+            proxy.skip_cert_verify = None;
+            proxy.client_fingerprint = None;
+            proxy.alpn = None;
+            proxy.obfs = None;
+            proxy.obfs_param = None;
+            proxy.protocol = None;
+            proxy.protocol_param = None;
+            proxy.obfs_password = None;
+            proxy.congestion_control = None;
+            proxy.udp_relay_mode = None;
+            proxy.private_key = Some(required_string(node, "private_key")?);
+            proxy.public_key = optional_string(node, "public_key");
+            proxy.pre_shared_key = optional_string(node, "preshared_key");
+            let addresses = optional_string_list(node, "local_address").unwrap_or_default();
+            proxy.ip = addresses.first().cloned();
+            proxy.ipv6 = addresses.iter().find(|value| value.contains(':')).cloned();
+            proxy.reserved = optional_string(node, "reserved");
+            proxy.mtu = optional_u32(node, "mtu");
         }
     }
 

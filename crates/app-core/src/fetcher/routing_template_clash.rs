@@ -93,12 +93,14 @@ fn parse_clash_proxy(item: &YamlValue, source_id: &str, updated_at: &str) -> Cor
 
     let protocol = match proxy_type.as_str() {
         "ss" => ProxyProtocol::Ss,
+        "ssr" => ProxyProtocol::Ssr,
         "vmess" => ProxyProtocol::Vmess,
         "vless" => ProxyProtocol::Vless,
         "trojan" => ProxyProtocol::Trojan,
         "hysteria2" => ProxyProtocol::Hysteria2,
         "tuic" => ProxyProtocol::Tuic,
         "anytls" => ProxyProtocol::AnyTls,
+        "wireguard" => ProxyProtocol::WireGuard,
         _ => {
             return Err(CoreError::SubscriptionParse(format!(
                 "不支持的 Clash 节点类型：{}",
@@ -132,7 +134,10 @@ fn parse_clash_proxy(item: &YamlValue, source_id: &str, updated_at: &str) -> Cor
     insert_optional_bool(&mut extra, "skip_cert_verify", proxy.skip_cert_verify);
     insert_optional_string(&mut extra, "client_fingerprint", proxy.client_fingerprint);
     insert_optional_string_list(&mut extra, "alpn", proxy.alpn);
+    insert_optional_string(&mut extra, "protocol", proxy.protocol);
     insert_optional_string(&mut extra, "obfs", proxy.obfs);
+    insert_optional_string(&mut extra, "protocol_param", proxy.protocol_param);
+    insert_optional_string(&mut extra, "obfs_param", proxy.obfs_param);
     insert_optional_string(&mut extra, "obfs_password", proxy.obfs_password);
     insert_optional_string(
         &mut extra,
@@ -163,6 +168,12 @@ fn parse_clash_proxy(item: &YamlValue, source_id: &str, updated_at: &str) -> Cor
         insert_optional_string_list(&mut extra, "host", h2_opts.host);
     }
 
+    insert_optional_string(&mut extra, "private_key", proxy.private_key);
+    insert_optional_string_list(&mut extra, "peers", proxy.peers);
+    insert_optional_string_list(&mut extra, "local_address", proxy.local_address);
+    insert_optional_string(&mut extra, "reserved", proxy.reserved);
+    insert_optional_u64(&mut extra, "mtu", proxy.mtu.map(u64::from));
+
     validate_required_fields(&protocol, &extra, &name)?;
 
     Ok(build_proxy_node(
@@ -190,12 +201,14 @@ fn validate_required_fields(
 ) -> CoreResult<()> {
     let required = match protocol {
         ProxyProtocol::Ss => &["cipher", "password"][..],
+        ProxyProtocol::Ssr => &["cipher", "password"][..],
         ProxyProtocol::Vmess => &["uuid"][..],
         ProxyProtocol::Vless => &["uuid"][..],
         ProxyProtocol::Trojan => &["password"][..],
         ProxyProtocol::Hysteria2 => &["password"][..],
         ProxyProtocol::Tuic => &["uuid", "password"][..],
         ProxyProtocol::AnyTls => &["password"][..],
+        ProxyProtocol::WireGuard => &["private_key"][..],
     };
 
     for key in required {
@@ -309,13 +322,29 @@ struct RawClashProxy {
     #[serde(default)]
     alpn: Option<Vec<String>>,
     #[serde(default)]
+    protocol: Option<String>,
+    #[serde(default)]
     obfs: Option<String>,
+    #[serde(rename = "protocol-param", default)]
+    protocol_param: Option<String>,
+    #[serde(rename = "obfs-param", default)]
+    obfs_param: Option<String>,
     #[serde(rename = "obfs-password", default)]
     obfs_password: Option<String>,
     #[serde(rename = "congestion-controller", default)]
     congestion_controller: Option<String>,
     #[serde(rename = "udp-relay-mode", default)]
     udp_relay_mode: Option<String>,
+    #[serde(rename = "private-key", default)]
+    private_key: Option<String>,
+    #[serde(default)]
+    peers: Option<Vec<String>>,
+    #[serde(rename = "local-address", default)]
+    local_address: Option<Vec<String>>,
+    #[serde(default)]
+    reserved: Option<String>,
+    #[serde(default)]
+    mtu: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]

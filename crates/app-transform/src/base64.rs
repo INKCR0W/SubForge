@@ -27,12 +27,14 @@ impl Transformer for Base64Transformer {
 fn build_share_uri(node: &ProxyNode) -> TransformResult<String> {
     match node.protocol {
         ProxyProtocol::Ss => build_ss_uri(node),
+        ProxyProtocol::Ssr => build_ssr_uri(node),
         ProxyProtocol::Vmess => build_vmess_uri(node),
         ProxyProtocol::Vless => build_vless_uri(node),
         ProxyProtocol::Trojan => build_trojan_uri(node),
         ProxyProtocol::Hysteria2 => build_hysteria2_uri(node),
         ProxyProtocol::Tuic => build_tuic_uri(node),
         ProxyProtocol::AnyTls => build_anytls_uri(node),
+        ProxyProtocol::WireGuard => build_wireguard_uri(node),
     }
 }
 
@@ -47,6 +49,56 @@ fn build_ss_uri(node: &ProxyNode) -> TransformResult<String> {
         format_host(&node.server),
         node.port,
         percent_encode_fragment(&node.name),
+    ))
+}
+
+fn build_ssr_uri(node: &ProxyNode) -> TransformResult<String> {
+    let cipher = required_string(node, "cipher")?;
+    let password = required_string(node, "password")?;
+    let protocol = optional_string(node, "protocol").unwrap_or_else(|| "origin".to_string());
+    let obfs = optional_string(node, "obfs").unwrap_or_else(|| "plain".to_string());
+
+    let password_encoded = URL_SAFE_NO_PAD.encode(password.as_bytes());
+    let mut query_pairs = Vec::<(String, String)>::new();
+    if let Some(value) = optional_string(node, "obfs_param") {
+        query_pairs.push((
+            "obfsparam".to_string(),
+            URL_SAFE_NO_PAD.encode(value.as_bytes()),
+        ));
+    }
+    if let Some(value) = optional_string(node, "protocol_param") {
+        query_pairs.push((
+            "protoparam".to_string(),
+            URL_SAFE_NO_PAD.encode(value.as_bytes()),
+        ));
+    }
+    query_pairs.push((
+        "remarks".to_string(),
+        URL_SAFE_NO_PAD.encode(node.name.as_bytes()),
+    ));
+
+    let mut plain = format!(
+        "{}:{}:{}:{}:{}:{}",
+        format_host(&node.server),
+        node.port,
+        protocol,
+        cipher,
+        obfs,
+        password_encoded
+    );
+    if !query_pairs.is_empty() {
+        let query = query_pairs
+            .iter()
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect::<Vec<_>>()
+            .join("&");
+        plain.push_str("/?");
+        plain.push_str(&query);
+    }
+
+    Ok(format!(
+        "ssr://{}",
+        URL_SAFE_NO_PAD.encode(plain.as_bytes())
     ))
 }
 
@@ -237,6 +289,40 @@ fn build_tuic_uri(node: &ProxyNode) -> TransformResult<String> {
     }
 
     Ok(build_uri_with_query("tuic", &credentials, node, &params))
+}
+
+fn build_wireguard_uri(node: &ProxyNode) -> TransformResult<String> {
+    let private_key = required_string(node, "private_key")?;
+    let mut params = Vec::<(String, String)>::new();
+    push_query_param(
+        &mut params,
+        "publickey",
+        optional_string(node, "public_key"),
+    );
+    push_query_param(
+        &mut params,
+        "presharedkey",
+        optional_string(node, "preshared_key"),
+    );
+    push_query_param(&mut params, "reserved", optional_string(node, "reserved"));
+    push_query_param(
+        &mut params,
+        "mtu",
+        optional_u32(node, "mtu").map(|value| value.to_string()),
+    );
+    if let Some(addresses) = optional_string_list(node, "local_address") {
+        push_query_param(&mut params, "address", Some(addresses.join(",")));
+    }
+    if let Some(peers) = optional_string_list(node, "peers") {
+        push_query_param(&mut params, "peer", Some(peers.join(",")));
+    }
+
+    Ok(build_uri_with_query(
+        "wireguard",
+        &percent_encode_userinfo(&private_key),
+        node,
+        &params,
+    ))
 }
 
 fn append_transport_params(node: &ProxyNode, params: &mut Vec<(String, String)>) {
