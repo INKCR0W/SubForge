@@ -86,6 +86,105 @@ vmess://{vmess_payload}"
 }
 
 #[test]
+fn uri_list_parser_supports_non_uri_clash_mihomo_payload() {
+    let parser = UriListParser;
+    let nodes = parser
+        .parse("source-non-uri-clash", NON_URI_CLASH_MIHOMO_FIXTURE)
+        .expect("解析 Clash/Mihomo 非 URI 文本应成功");
+
+    assert_eq!(nodes.len(), 2);
+
+    let ss = nodes
+        .iter()
+        .find(|node| node.name == "clash-ss-node")
+        .expect("应包含 clash ss 节点");
+    assert_eq!(ss.protocol, ProxyProtocol::Ss);
+    assert_eq!(ss.server, "ss.example.com");
+    assert_eq!(ss.port, 443);
+    assert_eq!(
+        ss.extra.get("cipher"),
+        Some(&Value::String("aes-128-gcm".to_string()))
+    );
+    assert_eq!(
+        ss.extra.get("password"),
+        Some(&Value::String("ss-pass".to_string()))
+    );
+
+    let vmess = nodes
+        .iter()
+        .find(|node| node.name == "clash-vmess-node")
+        .expect("应包含 clash vmess 节点");
+    assert_eq!(vmess.protocol, ProxyProtocol::Vmess);
+    assert_eq!(vmess.transport, ProxyTransport::Ws);
+    assert!(vmess.tls.enabled);
+    assert_eq!(vmess.tls.server_name.as_deref(), Some("vmess.example.com"));
+    assert_eq!(
+        vmess.extra.get("uuid"),
+        Some(&Value::String(
+            "11111111-1111-1111-1111-111111111111".to_string()
+        ))
+    );
+    assert_eq!(
+        vmess.extra.get("path"),
+        Some(&Value::String("/websocket".to_string()))
+    );
+    assert_eq!(
+        vmess.extra.get("host"),
+        Some(&Value::String("edge.example.com".to_string()))
+    );
+}
+
+#[test]
+fn uri_list_parser_supports_non_uri_surge_loon_qx_payloads() {
+    let parser = UriListParser;
+
+    let surge_nodes = parser
+        .parse("source-non-uri-surge", NON_URI_SURGE_FIXTURE)
+        .expect("解析 Surge 非 URI 文本应成功");
+    assert_eq!(surge_nodes.len(), 2);
+    assert!(
+        surge_nodes
+            .iter()
+            .any(|node| node.name == "Surge-SS" && node.protocol == ProxyProtocol::Ss)
+    );
+    assert!(
+        surge_nodes
+            .iter()
+            .any(|node| node.name == "Surge-VMess" && node.protocol == ProxyProtocol::Vmess)
+    );
+
+    let loon_nodes = parser
+        .parse("source-non-uri-loon", NON_URI_LOON_FIXTURE)
+        .expect("解析 Loon 非 URI 文本应成功");
+    assert_eq!(loon_nodes.len(), 2);
+    assert!(
+        loon_nodes
+            .iter()
+            .any(|node| node.name == "Loon-Trojan" && node.protocol == ProxyProtocol::Trojan)
+    );
+    assert!(
+        loon_nodes
+            .iter()
+            .any(|node| node.name == "Loon-VLESS" && node.protocol == ProxyProtocol::Vless)
+    );
+
+    let qx_nodes = parser
+        .parse("source-non-uri-qx", NON_URI_QX_FIXTURE)
+        .expect("解析 QX 非 URI 文本应成功");
+    assert_eq!(qx_nodes.len(), 2);
+    assert!(
+        qx_nodes
+            .iter()
+            .any(|node| node.name == "QX-SS" && node.protocol == ProxyProtocol::Ss)
+    );
+    assert!(
+        qx_nodes
+            .iter()
+            .any(|node| node.name == "QX-VMess" && node.protocol == ProxyProtocol::Vmess)
+    );
+}
+
+#[test]
 fn uri_list_parser_preserves_transport_tls_and_runtime_fields() {
     let parser = UriListParser;
     let vmess_payload = BASE64_STANDARD.encode(

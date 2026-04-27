@@ -7,6 +7,7 @@ mod anytls;
 mod base64;
 mod common;
 mod hysteria2;
+mod non_uri;
 mod socks_http;
 mod ss;
 mod ssr;
@@ -19,6 +20,7 @@ mod wireguard;
 use anytls::parse_anytls_uri;
 use base64::try_decode_base64_text;
 use hysteria2::parse_hysteria2_uri;
+use non_uri::parse_non_uri_payload;
 use socks_http::{parse_http_proxy_uri, parse_socks5_uri};
 use ss::parse_ss_uri;
 use ssr::parse_ssr_uri;
@@ -39,8 +41,12 @@ impl SubscriptionParser for UriListParser {
     fn parse(&self, source_id: &str, payload: &str) -> CoreResult<Vec<ProxyNode>> {
         let normalized = normalize_subscription_payload(payload);
         let updated_at = now_rfc3339()?;
-        let mut nodes = Vec::new();
 
+        if !looks_like_uri_list(&normalized) {
+            return parse_non_uri_payload(source_id, &normalized, &updated_at);
+        }
+
+        let mut nodes = Vec::new();
         for (line_number, raw_line) in normalized.lines().enumerate() {
             let line = raw_line.trim();
             if line.is_empty() || line.starts_with('#') {

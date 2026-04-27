@@ -1,0 +1,26 @@
+proxies:
+  - name: clash-ss-node
+    type: ss
+    server: ss.example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: ss-pass
+    udp: true
+  - name: clash-vmess-node
+    type: vmess
+    server: vmess.example.com
+    port: 443
+    uuid: 11111111-1111-1111-1111-111111111111
+    network: ws
+    tls: true
+    sni: vmess.example.com
+    ws-opts:
+      path: /websocket
+      headers:
+        Host: edge.example.com
+proxy-groups:
+  - name: Proxy
+    type: select
+    proxies:
+      - clash-ss-node
+      - clash-vmess-node

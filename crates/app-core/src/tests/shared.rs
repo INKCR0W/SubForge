@@ -31,6 +31,13 @@ pub(super) use crate::{
 
 pub(super) const BASE64_SUBSCRIPTION_FIXTURE: &str =
     include_str!("../../tests/fixtures/subscription_base64.txt");
+pub(super) const NON_URI_CLASH_MIHOMO_FIXTURE: &str =
+    include_str!("../../tests/fixtures/non_uri_clash_mihomo.yaml");
+pub(super) const NON_URI_SURGE_FIXTURE: &str =
+    include_str!("../../tests/fixtures/non_uri_surge.conf");
+pub(super) const NON_URI_LOON_FIXTURE: &str =
+    include_str!("../../tests/fixtures/non_uri_loon.conf");
+pub(super) const NON_URI_QX_FIXTURE: &str = include_str!("../../tests/fixtures/non_uri_qx.conf");
 
 pub(super) fn builtins_static_plugin_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/builtins/static")
