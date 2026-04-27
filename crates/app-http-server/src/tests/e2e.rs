@@ -609,6 +609,52 @@ async fn e2e_import_source_refresh_and_raw_profile_output() {
     let decoded_text = String::from_utf8(decoded).expect("base64 解码内容不是 UTF-8");
     assert!(decoded_text.contains('\n'));
 
+    let stash_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!(
+                    "/api/profiles/{profile_id}/stash?token={export_token}"
+                ))
+                .header(HOST, "127.0.0.1:18118")
+                .body(Body::empty())
+                .expect("构建 stash 请求失败"),
+        )
+        .await
+        .expect("读取 stash 订阅请求执行失败");
+    assert!(
+        matches!(
+            stash_response.status(),
+            StatusCode::OK | StatusCode::TOO_MANY_REQUESTS
+        ),
+        "stash status={}",
+        stash_response.status()
+    );
+
+    let v2ray_uri_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!(
+                    "/api/profiles/{profile_id}/v2ray-uri?token={export_token}"
+                ))
+                .header(HOST, "127.0.0.1:18118")
+                .body(Body::empty())
+                .expect("构建 v2ray-uri 请求失败"),
+        )
+        .await
+        .expect("读取 v2ray-uri 订阅请求执行失败");
+    assert!(
+        matches!(
+            v2ray_uri_response.status(),
+            StatusCode::OK | StatusCode::TOO_MANY_REQUESTS
+        ),
+        "v2ray-uri status={}",
+        v2ray_uri_response.status()
+    );
+
     let raw_cached_response = app
         .clone()
         .oneshot(

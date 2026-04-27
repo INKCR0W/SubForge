@@ -260,7 +260,20 @@ pub(crate) fn is_profile_read_endpoint(method: &Method, path: &str) -> bool {
         return false;
     };
     let suffix = path.strip_prefix(&format!("/api/profiles/{profile_id}/"));
-    matches!(suffix, Some("raw" | "clash" | "sing-box" | "base64"))
+    matches!(
+        suffix,
+        Some(
+            "raw"
+                | "clash"
+                | "sing-box"
+                | "base64"
+                | "stash"
+                | "surge"
+                | "loon"
+                | "qx"
+                | "v2ray-uri"
+        )
+    )
 }
 
 pub(crate) fn normalize_host(raw: &str) -> String {

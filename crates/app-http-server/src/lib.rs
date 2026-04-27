@@ -16,12 +16,14 @@ use axum::routing::{delete, get, post, put};
 use handlers::{
     create_profile_handler, create_source_handler, delete_plugin_handler, delete_profile_handler,
     delete_source_handler, events_handler, get_plugin_schema_handler, get_profile_base64_handler,
-    get_profile_clash_handler, get_profile_raw_handler, get_profile_singbox_handler,
-    get_system_settings_handler, get_system_status_handler, health_handler, import_plugin_handler,
-    list_logs_handler, list_plugins_handler, list_profiles_handler, list_sources_handler,
-    refresh_profile_handler, refresh_source_handler, rotate_admin_token_handler,
-    rotate_profile_export_token_handler, shutdown_system_handler, update_profile_handler,
-    update_source_handler, update_system_settings_handler,
+    get_profile_clash_handler, get_profile_loon_handler, get_profile_qx_handler,
+    get_profile_raw_handler, get_profile_singbox_handler, get_profile_stash_handler,
+    get_profile_surge_handler, get_profile_v2ray_uri_handler, get_system_settings_handler,
+    get_system_status_handler, health_handler, import_plugin_handler, list_logs_handler,
+    list_plugins_handler, list_profiles_handler, list_sources_handler, refresh_profile_handler,
+    refresh_source_handler, rotate_admin_token_handler, rotate_profile_export_token_handler,
+    shutdown_system_handler, update_profile_handler, update_source_handler,
+    update_system_settings_handler,
 };
 use middleware::{
     admin_auth_middleware, cors_reject_middleware, host_validation_middleware,
@@ -74,6 +76,14 @@ pub fn build_router(state: ServerContext) -> Router {
             get(get_profile_singbox_handler),
         )
         .route("/api/profiles/{id}/base64", get(get_profile_base64_handler))
+        .route("/api/profiles/{id}/stash", get(get_profile_stash_handler))
+        .route("/api/profiles/{id}/surge", get(get_profile_surge_handler))
+        .route("/api/profiles/{id}/loon", get(get_profile_loon_handler))
+        .route("/api/profiles/{id}/qx", get(get_profile_qx_handler))
+        .route(
+            "/api/profiles/{id}/v2ray-uri",
+            get(get_profile_v2ray_uri_handler),
+        )
         .route("/api/profiles/{id}/raw", get(get_profile_raw_handler))
         .route("/api/events", get(events_handler))
         .layer(DefaultBodyLimit::max(MAX_PLUGIN_UPLOAD_BYTES))

@@ -9,7 +9,10 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde_json::{Value, json};
 
-use super::{Base64Transformer, ClashTransformer, SingboxTransformer, TransformError, Transformer};
+use super::{
+    Base64Transformer, ClashTransformer, NonUriTextTransformer, SingboxTransformer,
+    StashTransformer, TransformError, Transformer, V2RayUriTransformer,
+};
 
 #[test]
 fn snapshot_ss_proxy_yaml() {
@@ -589,6 +592,70 @@ fn base64_transform_rejects_socks5_and_http_protocols() {
             target: "base64-uri",
         }
     );
+}
+
+#[test]
+fn v2ray_uri_transform_outputs_plain_uri_lines() {
+    let profile = test_profile();
+    let node = build_node(
+        "V2RAY-SS",
+        ProxyProtocol::Ss,
+        ProxyTransport::Tcp,
+        Some("hk"),
+        vec![
+            ("cipher", Value::String("aes-128-gcm".to_string())),
+            ("password", Value::String("v2ray-pass".to_string())),
+        ],
+    );
+    let payload = V2RayUriTransformer::default()
+        .transform(&[node], &profile)
+        .expect("v2ray-uri 导出失败");
+    assert!(payload.starts_with("ss://"));
+    assert!(!payload.contains('\n'));
+}
+
+#[test]
+fn stash_transformer_matches_clash_output() {
+    let profile = test_profile();
+    let node = build_node(
+        "STASH-SS",
+        ProxyProtocol::Ss,
+        ProxyTransport::Tcp,
+        Some("hk"),
+        vec![
+            ("cipher", Value::String("aes-128-gcm".to_string())),
+            ("password", Value::String("stash-pass".to_string())),
+        ],
+    );
+
+    let stash = StashTransformer::default()
+        .transform(&[node.clone()], &profile)
+        .expect("stash 导出失败");
+    let clash = ClashTransformer::default()
+        .transform(&[node], &profile)
+        .expect("clash 导出失败");
+    assert_eq!(normalize_yaml(&stash), normalize_yaml(&clash));
+}
+
+#[test]
+fn non_uri_text_transformer_outputs_ini_style_line() {
+    let profile = test_profile();
+    let node = build_node(
+        "Surge-SS",
+        ProxyProtocol::Ss,
+        ProxyTransport::Tcp,
+        Some("hk"),
+        vec![
+            ("cipher", Value::String("aes-128-gcm".to_string())),
+            ("password", Value::String("surge-pass".to_string())),
+        ],
+    );
+    let payload = NonUriTextTransformer::default()
+        .transform_surge(&[node], &profile)
+        .expect("surge 文本导出失败");
+    assert!(payload.contains("Surge-SS = ss,"));
+    assert!(payload.contains("encrypt-method=aes-128-gcm"));
+    assert!(payload.contains("password=surge-pass"));
 }
 
 #[test]

@@ -1,4 +1,7 @@
-use app_transform::{Base64Transformer, ClashTransformer, SingboxTransformer, Transformer};
+use app_transform::{
+    Base64Transformer, ClashTransformer, NonUriTextTransformer, SingboxTransformer,
+    StashTransformer, Transformer, V2RayUriTransformer,
+};
 
 use super::*;
 
@@ -54,6 +57,101 @@ pub(crate) async fn get_profile_base64_handler(
     let _ = query.token.as_deref();
     let cache_entry = load_profile_cache_entry(&state, &id)?;
     let body = Base64Transformer
+        .transform(&cache_entry.nodes, &cache_entry.profile)
+        .map_err(transform_error_to_response)?;
+    let headers = build_subscription_headers(
+        state.database.as_ref(),
+        &cache_entry,
+        "txt",
+        "text/plain; charset=utf-8",
+    )?;
+    Ok((StatusCode::OK, headers, body).into_response())
+}
+
+pub(crate) async fn get_profile_stash_handler(
+    State(state): State<ServerContext>,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<TokenQuery>,
+) -> ApiResponseResult {
+    let _ = query.token.as_deref();
+    let cache_entry = load_profile_cache_entry(&state, &id)?;
+    let body = StashTransformer::default()
+        .transform(&cache_entry.nodes, &cache_entry.profile)
+        .map_err(transform_error_to_response)?;
+    let headers = build_subscription_headers(
+        state.database.as_ref(),
+        &cache_entry,
+        "yaml",
+        "text/yaml; charset=utf-8",
+    )?;
+    Ok((StatusCode::OK, headers, body).into_response())
+}
+
+pub(crate) async fn get_profile_surge_handler(
+    State(state): State<ServerContext>,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<TokenQuery>,
+) -> ApiResponseResult {
+    let _ = query.token.as_deref();
+    let cache_entry = load_profile_cache_entry(&state, &id)?;
+    let body = NonUriTextTransformer::default()
+        .transform_surge(&cache_entry.nodes, &cache_entry.profile)
+        .map_err(transform_error_to_response)?;
+    let headers = build_subscription_headers(
+        state.database.as_ref(),
+        &cache_entry,
+        "conf",
+        "text/plain; charset=utf-8",
+    )?;
+    Ok((StatusCode::OK, headers, body).into_response())
+}
+
+pub(crate) async fn get_profile_loon_handler(
+    State(state): State<ServerContext>,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<TokenQuery>,
+) -> ApiResponseResult {
+    let _ = query.token.as_deref();
+    let cache_entry = load_profile_cache_entry(&state, &id)?;
+    let body = NonUriTextTransformer::default()
+        .transform_loon(&cache_entry.nodes, &cache_entry.profile)
+        .map_err(transform_error_to_response)?;
+    let headers = build_subscription_headers(
+        state.database.as_ref(),
+        &cache_entry,
+        "conf",
+        "text/plain; charset=utf-8",
+    )?;
+    Ok((StatusCode::OK, headers, body).into_response())
+}
+
+pub(crate) async fn get_profile_qx_handler(
+    State(state): State<ServerContext>,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<TokenQuery>,
+) -> ApiResponseResult {
+    let _ = query.token.as_deref();
+    let cache_entry = load_profile_cache_entry(&state, &id)?;
+    let body = NonUriTextTransformer::default()
+        .transform_qx(&cache_entry.nodes, &cache_entry.profile)
+        .map_err(transform_error_to_response)?;
+    let headers = build_subscription_headers(
+        state.database.as_ref(),
+        &cache_entry,
+        "conf",
+        "text/plain; charset=utf-8",
+    )?;
+    Ok((StatusCode::OK, headers, body).into_response())
+}
+
+pub(crate) async fn get_profile_v2ray_uri_handler(
+    State(state): State<ServerContext>,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<TokenQuery>,
+) -> ApiResponseResult {
+    let _ = query.token.as_deref();
+    let cache_entry = load_profile_cache_entry(&state, &id)?;
+    let body = V2RayUriTransformer::default()
         .transform(&cache_entry.nodes, &cache_entry.profile)
         .map_err(transform_error_to_response)?;
     let headers = build_subscription_headers(

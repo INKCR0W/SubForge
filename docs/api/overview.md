@@ -40,6 +40,11 @@
 - `GET /api/profiles/{id}/clash?token=...`
 - `GET /api/profiles/{id}/sing-box?token=...`
 - `GET /api/profiles/{id}/base64?token=...`
+- `GET /api/profiles/{id}/stash?token=...`
+- `GET /api/profiles/{id}/surge?token=...`
+- `GET /api/profiles/{id}/loon?token=...`
+- `GET /api/profiles/{id}/qx?token=...`
+- `GET /api/profiles/{id}/v2ray-uri?token=...`
 - `GET /api/profiles/{id}/raw?token=...`
 
 说明：

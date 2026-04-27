@@ -153,6 +153,38 @@ async fn plugins_api_rejects_query_admin_token() {
 }
 
 #[tokio::test]
+async fn new_export_endpoints_require_profile_token() {
+    let app = build_router(build_test_state());
+    for path in [
+        "/api/profiles/profile-1/stash",
+        "/api/profiles/profile-1/surge",
+        "/api/profiles/profile-1/loon",
+        "/api/profiles/profile-1/qx",
+        "/api/profiles/profile-1/v2ray-uri",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header(HOST, "127.0.0.1:18118")
+                    .body(Body::empty())
+                    .expect("创建请求失败"),
+            )
+            .await
+            .expect("请求执行失败");
+        assert!(
+            matches!(
+                response.status(),
+                StatusCode::UNAUTHORIZED | StatusCode::TOO_MANY_REQUESTS
+            ),
+            "path={path}, status={}",
+            response.status()
+        );
+    }
+}
+
+#[tokio::test]
 async fn plugins_api_accepts_admin_header() {
     let app = build_router(build_test_state());
     let response = app

@@ -24,7 +24,7 @@ impl Transformer for Base64Transformer {
     }
 }
 
-fn build_share_uri(node: &ProxyNode) -> TransformResult<String> {
+pub fn build_share_uri(node: &ProxyNode) -> TransformResult<String> {
     match node.protocol {
         ProxyProtocol::Ss => build_ss_uri(node),
         ProxyProtocol::Ssr => build_ssr_uri(node),

@@ -24,8 +24,9 @@ use template_settings::{
 };
 
 pub(crate) use export::{
-    get_profile_base64_handler, get_profile_clash_handler, get_profile_raw_handler,
-    get_profile_singbox_handler,
+    get_profile_base64_handler, get_profile_clash_handler, get_profile_loon_handler,
+    get_profile_qx_handler, get_profile_raw_handler, get_profile_singbox_handler,
+    get_profile_stash_handler, get_profile_surge_handler, get_profile_v2ray_uri_handler,
 };
 pub(crate) use read::list_profiles_handler;
 pub(crate) use tokens::rotate_profile_export_token_handler;
