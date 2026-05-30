@@ -1994,7 +1994,7 @@ async fn e2e_script_source_refresh_via_management_api() {
         .to_string();
 
     let export_token_repository = ExportTokenRepository::new(state.database.as_ref());
-    let export_token = export_token_repository
+    let _export_token = export_token_repository
         .get_active_token(&profile_id)
         .expect("读取脚本 Profile export_token 失败")
         .expect("创建脚本 Profile 后应自动生成 export_token")
@@ -2013,16 +2013,19 @@ async fn e2e_script_source_refresh_via_management_api() {
     let refresh_payload = read_json(refresh_response).await;
     assert_eq!(
         refresh_status,
-        StatusCode::OK,
-        "脚本来源刷新应成功，实际返回：{refresh_payload:?}"
+        StatusCode::BAD_REQUEST,
+        "脚本来源返回 loopback URL 时应被 SSRF guard 拦截，实际返回：{refresh_payload:?}"
     );
     assert_eq!(
-        refresh_payload.get("source_id").and_then(Value::as_str),
-        Some(source_id.as_str())
+        refresh_payload.get("code").and_then(Value::as_str),
+        Some("E_SCRIPT_RUNTIME")
     );
-    assert_eq!(
-        refresh_payload.get("node_count").and_then(Value::as_u64),
-        Some(3)
+    assert!(
+        refresh_payload
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|message| message.contains("目标地址不允许")),
+        "错误信息应来自脚本 URL SSRF guard，实际：{refresh_payload:?}"
     );
 
     let refresh_repository = RefreshJobRepository::new(state.database.as_ref());
@@ -2030,8 +2033,11 @@ async fn e2e_script_source_refresh_via_management_api() {
         .list_by_source(&source_id)
         .expect("读取脚本 refresh_jobs 失败");
     assert_eq!(refresh_jobs.len(), 1);
-    assert_eq!(refresh_jobs[0].status, "success");
-    assert_eq!(refresh_jobs[0].node_count, Some(3));
+    assert_eq!(refresh_jobs[0].status, "failed");
+    assert_eq!(
+        refresh_jobs[0].error_code.as_deref(),
+        Some("E_SCRIPT_RUNTIME")
+    );
 
     let logs_response = app
         .clone()
@@ -2065,46 +2071,21 @@ async fn e2e_script_source_refresh_via_management_api() {
             .is_some_and(|message| message.contains("script-mock fetch subscription"))
     }));
 
-    let event = wait_refresh_complete_event(&mut event_receiver, &source_id).await;
-    assert_eq!(event.event, "refresh:complete");
+    let event = wait_refresh_failed_event(&mut event_receiver, &source_id).await;
+    assert_eq!(event.event, "refresh:failed");
     assert_eq!(event.source_id.as_deref(), Some(source_id.as_str()));
-
-    let raw_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(Method::GET)
-                .uri(format!(
-                    "/api/profiles/{profile_id}/raw?token={export_token}"
-                ))
-                .header(HOST, "127.0.0.1:18118")
-                .body(Body::empty())
-                .expect("构建脚本 raw 请求失败"),
-        )
-        .await
-        .expect("读取脚本 raw 订阅请求执行失败");
-    assert_eq!(raw_response.status(), StatusCode::OK);
-    let raw_payload = read_json(raw_response).await;
-    assert_eq!(
-        raw_payload.get("profile_id").and_then(Value::as_str),
-        Some(profile_id.as_str())
-    );
-    assert_eq!(
-        raw_payload.get("node_count").and_then(Value::as_u64),
-        Some(3)
-    );
 
     let source_repository = app_storage::SourceRepository::new(state.database.as_ref());
     let persisted_state_raw = source_repository
         .get_by_id(&source_id)
         .expect("读取脚本来源失败")
         .and_then(|source| source.state_json)
-        .expect("脚本来源刷新后应写入 state_json");
+        .expect("脚本 fetch 执行成功后、URL 拉取前仍会持久化 state_json");
     let persisted_state: Value =
         serde_json::from_str(&persisted_state_raw).expect("state_json 必须是合法 JSON");
     assert_eq!(
         persisted_state.get("counter").and_then(Value::as_u64),
-        Some(3)
+        Some(2)
     );
 
     server_task.abort();

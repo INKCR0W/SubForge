@@ -22,6 +22,10 @@ mod tests;
 use error_map::map_lua_error;
 use runtime_apis::{new_cookie_store, register_runtime_apis};
 
+pub use runtime_apis::{
+    ensure_http_target_allowed_for_plugin, http_target_redirect_policy_for_plugin,
+};
+
 const DEFAULT_MEMORY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
 const DEFAULT_TIMEOUT_SECONDS: u64 = 20;
 const DEFAULT_HOOK_STEP: u32 = 1000;

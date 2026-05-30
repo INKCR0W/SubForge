@@ -81,16 +81,31 @@ pub(super) async fn wait_refresh_complete_event(
     receiver: &mut tokio::sync::broadcast::Receiver<ApiEvent>,
     source_id: &str,
 ) -> ApiEvent {
+    wait_refresh_event(receiver, source_id, "refresh:complete").await
+}
+
+pub(super) async fn wait_refresh_failed_event(
+    receiver: &mut tokio::sync::broadcast::Receiver<ApiEvent>,
+    source_id: &str,
+) -> ApiEvent {
+    wait_refresh_event(receiver, source_id, "refresh:failed").await
+}
+
+async fn wait_refresh_event(
+    receiver: &mut tokio::sync::broadcast::Receiver<ApiEvent>,
+    source_id: &str,
+    event_name: &str,
+) -> ApiEvent {
     timeout(Duration::from_secs(5), async {
         loop {
             let event = receiver.recv().await.expect("读取事件失败");
-            if event.event == "refresh:complete" && event.source_id.as_deref() == Some(source_id) {
+            if event.event == event_name && event.source_id.as_deref() == Some(source_id) {
                 return event;
             }
         }
     })
     .await
-    .expect("等待 refresh:complete 事件超时")
+    .unwrap_or_else(|_| panic!("等待 {event_name} 事件超时"))
 }
 
 pub(super) fn build_builtin_plugin_zip_bytes() -> Vec<u8> {

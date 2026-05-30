@@ -423,7 +423,7 @@ async fn engine_refresh_source_denies_unlisted_manifest_capability_api() {
 }
 
 #[tokio::test]
-async fn engine_refresh_source_uses_standard_headers_for_script_subscription_url() {
+async fn engine_refresh_source_blocks_script_subscription_url_before_local_request() {
     let db = Database::open_in_memory().expect("内存数据库初始化失败");
     let temp_root = create_temp_dir("engine-script-subscription-url-headers");
     let plugins_dir = temp_root.join("plugins");
@@ -510,23 +510,221 @@ async fn engine_refresh_source_uses_standard_headers_for_script_subscription_url
         .expect("创建脚本来源应成功");
 
     let engine = Engine::new(&db, &plugins_dir, Arc::clone(&secret_store));
-    let result = engine
+    let error = engine
         .refresh_source(&source.source.id, "manual")
         .await
-        .expect("脚本订阅 URL 刷新应成功");
-    assert_eq!(result.node_count, 1);
-    assert_eq!(chrome_requests.load(Ordering::SeqCst), 0);
+        .expect_err("脚本订阅 URL 指向 loopback 时应在发起请求前被拦截");
+    assert_eq!(error.code(), "E_SCRIPT_RUNTIME");
+    assert!(
+        error.to_string().contains("目标地址不允许"),
+        "错误信息应来自脚本 URL SSRF guard，实际：{error}"
+    );
+    assert_eq!(
+        chrome_requests.load(Ordering::SeqCst),
+        0,
+        "SSRF guard 应在 HTTP 请求发出前拦截，测试服务不应收到请求"
+    );
 
     server_task.abort();
     cleanup_dir(&temp_root);
 }
 
 #[tokio::test]
-async fn engine_refresh_source_allows_script_subscription_custom_headers() {
+async fn engine_refresh_source_rejects_script_subscription_url_without_http_capability() {
+    let db = Database::open_in_memory().expect("内存数据库初始化失败");
+    let temp_root = create_temp_dir("engine-script-url-http-capability");
+    let plugins_dir = temp_root.join("plugins");
+    let plugin_dir = temp_root.join("script-url-no-http-plugin");
+    let scripts_dir = plugin_dir.join("scripts");
+    fs::create_dir_all(&scripts_dir).expect("创建脚本插件目录失败");
+    fs::write(
+        plugin_dir.join("plugin.json"),
+        r#"{
+            "plugin_id": "vendor.example.script-url-no-http",
+            "spec_version": "1.0",
+            "name": "Script URL Without HTTP",
+            "version": "1.0.0",
+            "type": "script",
+            "config_schema": "schema.json",
+            "secret_fields": [],
+            "entrypoints": {
+                "fetch": "scripts/fetch.lua"
+            },
+            "capabilities": ["json"],
+            "network_profile": "standard"
+        }"#,
+    )
+    .expect("写入 plugin.json 失败");
+    fs::write(
+        plugin_dir.join("schema.json"),
+        r#"{
+            "type": "object",
+            "required": ["seed"],
+            "properties": {
+                "seed": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+        }"#,
+    )
+    .expect("写入 schema.json 失败");
+    fs::write(
+        scripts_dir.join("fetch.lua"),
+        r#"
+            function fetch(ctx, config, state)
+                return {
+                    ok = true,
+                    subscription = {
+                        url = "https://example.com/subscription.txt"
+                    }
+                }
+            end
+        "#,
+    )
+    .expect("写入 fetch.lua 失败");
+
+    let install_service = PluginInstallService::new(&db, &plugins_dir);
+    install_service
+        .install_from_dir(&plugin_dir)
+        .expect("安装脚本插件应成功");
+
+    let secret_store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let source_service = SourceService::new(&db, &plugins_dir, secret_store.as_ref());
+    let mut config = BTreeMap::new();
+    config.insert("seed".to_string(), json!("ignored"));
+    let source = source_service
+        .create_source(
+            "vendor.example.script-url-no-http",
+            "Script URL Without HTTP Source",
+            config,
+        )
+        .expect("创建脚本来源应成功");
+
+    let engine = Engine::new(&db, &plugins_dir, Arc::clone(&secret_store));
+    let error = engine
+        .refresh_source(&source.source.id, "manual")
+        .await
+        .expect_err("未声明 http capability 时脚本 URL 模式应失败");
+    assert_eq!(error.code(), "E_SCRIPT_RUNTIME");
+    assert!(
+        error.to_string().contains("需要 http capability"),
+        "错误信息应指出 subscription.url 需要 http capability，实际：{error}"
+    );
+
+    let cache_repository = NodeCacheRepository::new(&db);
+    assert!(
+        cache_repository
+            .get_by_source(&source.source.id)
+            .expect("查询 node_cache 失败")
+            .is_none(),
+        "能力检查失败后不应写入 node_cache"
+    );
+
+    cleanup_dir(&temp_root);
+}
+
+#[tokio::test]
+async fn engine_refresh_source_blocks_script_subscription_url_loopback_target() {
+    let db = Database::open_in_memory().expect("内存数据库初始化失败");
+    let temp_root = create_temp_dir("engine-script-url-ssrf");
+    let plugins_dir = temp_root.join("plugins");
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let app = Router::new().route(
+        "/health",
+        get({
+            let request_count = Arc::clone(&request_count);
+            move || {
+                let request_count = Arc::clone(&request_count);
+                async move {
+                    request_count.fetch_add(1, Ordering::SeqCst);
+                    (StatusCode::OK, "should not be reached")
+                }
+            }
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("启动测试 HTTP 服务失败");
+    let address = listener.local_addr().expect("读取监听地址失败");
+    let base_url = format!("http://{address}");
+    let server_task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("测试 HTTP 服务运行失败");
+    });
+    let fetch_script = format!(
+        r#"
+        function fetch(ctx, config, state)
+            return {{
+                ok = true,
+                subscription = {{
+                    url = "{base_url}/health"
+                }}
+            }}
+        end
+    "#
+    );
+    let script_plugin_dir = create_script_plugin_dir(
+        &temp_root,
+        "script-url-ssrf-plugin",
+        "vendor.example.script-url-ssrf",
+        None,
+        None,
+        &fetch_script,
+    );
+    let install_service = PluginInstallService::new(&db, &plugins_dir);
+    install_service
+        .install_from_dir(&script_plugin_dir)
+        .expect("安装脚本插件应成功");
+
+    let secret_store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let source_service = SourceService::new(&db, &plugins_dir, secret_store.as_ref());
+    let mut config = BTreeMap::new();
+    config.insert("seed".to_string(), json!("ignored"));
+    let source = source_service
+        .create_source(
+            "vendor.example.script-url-ssrf",
+            "Script URL SSRF Source",
+            config,
+        )
+        .expect("创建脚本来源应成功");
+
+    let engine = Engine::new(&db, &plugins_dir, Arc::clone(&secret_store));
+    let error = engine
+        .refresh_source(&source.source.id, "manual")
+        .await
+        .expect_err("脚本 URL 指向 loopback 时应被 SSRF guard 拦截");
+    assert_eq!(error.code(), "E_SCRIPT_RUNTIME");
+    assert!(
+        error.to_string().contains("目标地址不允许"),
+        "错误信息应来自脚本 URL SSRF guard，实际：{error}"
+    );
+
+    let cache_repository = NodeCacheRepository::new(&db);
+    assert!(
+        cache_repository
+            .get_by_source(&source.source.id)
+            .expect("查询 node_cache 失败")
+            .is_none(),
+        "SSRF guard 拦截后不应写入 node_cache"
+    );
+    assert_eq!(
+        request_count.load(Ordering::SeqCst),
+        0,
+        "SSRF guard 应在 HTTP 请求发出前拦截"
+    );
+
+    server_task.abort();
+    cleanup_dir(&temp_root);
+}
+
+#[tokio::test]
+async fn static_fetcher_allows_custom_headers_for_subscription_request() {
     let db = Database::open_in_memory().expect("内存数据库初始化失败");
     let temp_root = create_temp_dir("engine-script-subscription-custom-headers");
-    let plugins_dir = temp_root.join("plugins");
-    let install_service = PluginInstallService::new(&db, &plugins_dir);
+    let source = sample_source("static-custom-headers", "subforge.builtin.static");
+    SourceRepository::new(&db)
+        .insert(&source)
+        .expect("写入测试 source 失败");
 
     let app = Router::new().route(
         "/sub",
@@ -567,53 +765,20 @@ async fn engine_refresh_source_allows_script_subscription_custom_headers() {
             .await
             .expect("测试 HTTP 服务运行失败");
     });
-    let fetch_script = format!(
-        r#"
-            function fetch(ctx, config, state)
-                return {{
-                    ok = true,
-                    subscription = {{
-                        url = "{base_url}/sub",
-                        headers = {{
-                            ["x-sub-token"] = "abc-token",
-                            ["accept"] = "text/plain"
-                        }}
-                    }}
-                }}
-            end
-        "#
-    );
-    let script_plugin_dir = create_script_plugin_dir_with_network_profile(
-        &temp_root,
-        "script-custom-headers-plugin",
-        "vendor.example.script-custom-headers",
-        None,
-        None,
-        &fetch_script,
-        "browser_chrome",
-    );
-    install_service
-        .install_from_dir(&script_plugin_dir)
-        .expect("安装脚本插件应成功");
-
-    let secret_store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
-    let source_service = SourceService::new(&db, &plugins_dir, secret_store.as_ref());
-    let mut config = BTreeMap::new();
-    config.insert("seed".to_string(), json!("ignored"));
-    let source = source_service
-        .create_source(
-            "vendor.example.script-custom-headers",
-            "Script Custom Header Source",
-            config,
+    let mut extra_headers = BTreeMap::new();
+    extra_headers.insert("x-sub-token".to_string(), "abc-token".to_string());
+    extra_headers.insert("accept".to_string(), "text/plain".to_string());
+    let fetcher = StaticFetcher::new(&db).expect("初始化 StaticFetcher 失败");
+    let result = fetcher
+        .fetch_and_cache_with_metadata_and_headers(
+            &source.id,
+            &format!("{base_url}/sub"),
+            None,
+            Some(&extra_headers),
         )
-        .expect("创建脚本来源应成功");
-
-    let engine = Engine::new(&db, &plugins_dir, Arc::clone(&secret_store));
-    let result = engine
-        .refresh_source(&source.source.id, "manual")
         .await
-        .expect("脚本订阅 URL + 自定义 headers 刷新应成功");
-    assert_eq!(result.node_count, 1);
+        .expect("自定义 headers 订阅请求应成功");
+    assert_eq!(result.nodes.len(), 1);
 
     server_task.abort();
     cleanup_dir(&temp_root);

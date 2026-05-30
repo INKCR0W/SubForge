@@ -4,6 +4,7 @@ use app_common::ProxyNode;
 use app_storage::{Database, NodeCacheRepository};
 use app_transport::{NetworkProfileFactory, TransportProfile};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT};
+use reqwest::redirect::Policy;
 use reqwest::{Client as HttpClient, Url};
 use tokio::time::sleep;
 
@@ -42,6 +43,18 @@ impl<'a> StaticFetcher<'a, UriListParser> {
         Self::new_with_network_profile(db, "standard")
     }
 
+    pub(crate) fn new_with_redirect_policy(
+        db: &'a Database,
+        redirect_policy: Option<Policy>,
+    ) -> CoreResult<Self> {
+        Self::with_parser_network_profile_and_redirect_policy(
+            db,
+            UriListParser,
+            "standard",
+            redirect_policy,
+        )
+    }
+
     pub fn new_with_network_profile(db: &'a Database, network_profile: &str) -> CoreResult<Self> {
         Self::with_parser_and_network_profile(db, UriListParser, network_profile)
     }
@@ -60,8 +73,21 @@ where
         parser: P,
         network_profile: &str,
     ) -> CoreResult<Self> {
+        Self::with_parser_network_profile_and_redirect_policy(db, parser, network_profile, None)
+    }
+
+    fn with_parser_network_profile_and_redirect_policy(
+        db: &'a Database,
+        parser: P,
+        network_profile: &str,
+        redirect_policy: Option<Policy>,
+    ) -> CoreResult<Self> {
         let transport_profile = NetworkProfileFactory::create(network_profile)?;
-        let client = transport_profile.build_client()?;
+        let client = transport_profile.build_client_with_limits(
+            transport_profile.timeout(),
+            transport_profile.max_redirects(),
+            redirect_policy,
+        )?;
 
         Ok(Self {
             db,

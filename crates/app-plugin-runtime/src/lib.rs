@@ -8,4 +8,7 @@ mod tests;
 
 pub use error::{PluginRuntimeError, PluginRuntimeResult};
 pub use loader::{LoadedPlugin, PluginLoader};
-pub use lua_sandbox::{LuaSandbox, LuaSandboxConfig, RuntimeLogLevel, RuntimeLogSink};
+pub use lua_sandbox::{
+    LuaSandbox, LuaSandboxConfig, RuntimeLogLevel, RuntimeLogSink,
+    ensure_http_target_allowed_for_plugin, http_target_redirect_policy_for_plugin,
+};

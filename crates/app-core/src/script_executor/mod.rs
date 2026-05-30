@@ -2,9 +2,13 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use app_common::{PluginType, ProxyNode};
-use app_plugin_runtime::{LoadedPlugin, LuaSandbox, LuaSandboxConfig};
+use app_plugin_runtime::{
+    LoadedPlugin, LuaSandbox, LuaSandboxConfig, ensure_http_target_allowed_for_plugin,
+    http_target_redirect_policy_for_plugin,
+};
 use app_secrets::SecretStore;
 use app_storage::Database;
+use reqwest::Url;
 use serde_json::Value;
 
 use crate::script_executor::errors::script_runtime_error;
@@ -22,6 +26,8 @@ mod logging;
 mod paths;
 mod pipeline;
 mod state;
+
+const SCRIPT_SUBSCRIPTION_URL_MAX_REDIRECTS: usize = 5;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ScriptExecutionResult {
@@ -106,7 +112,12 @@ impl<'a> ScriptExecutor<'a> {
                 self.db,
                 &loaded_plugin.manifest.network_profile,
             )?;
-            let subscription_fetcher = StaticFetcher::new(self.db)?;
+            let subscription_fetcher = StaticFetcher::new_with_redirect_policy(
+                self.db,
+                Some(http_target_redirect_policy_for_plugin(
+                    SCRIPT_SUBSCRIPTION_URL_MAX_REDIRECTS,
+                )),
+            )?;
 
             if state.is_none()
                 && let Some(login_entry) = loaded_plugin.manifest.entrypoints.login.as_deref()
@@ -159,6 +170,9 @@ impl<'a> ScriptExecutor<'a> {
                 trigger_type,
                 state.as_ref(),
             )?;
+            if let ScriptSubscription::Url { url, .. } = &fetch_result.subscription {
+                ensure_script_subscription_url_allowed(url, loaded_plugin)?;
+            }
             apply_state_update(&mut state, fetch_result.state_update.clone());
             persist_state_if_changed(self.db, &mut source_row, &state, &fetch_result.state_update)?;
 
@@ -210,4 +224,30 @@ impl<'a> ScriptExecutor<'a> {
 
         execution_result
     }
+}
+
+fn ensure_script_subscription_url_allowed(
+    url: &str,
+    loaded_plugin: &LoadedPlugin,
+) -> CoreResult<()> {
+    let has_http_capability = loaded_plugin
+        .manifest
+        .capabilities
+        .iter()
+        .any(|capability| capability == "http");
+    if !has_http_capability {
+        return Err(CoreError::PluginRuntime(
+            app_plugin_runtime::PluginRuntimeError::ScriptRuntime(
+                "fetch.subscription.url 需要 http capability".to_string(),
+            ),
+        ));
+    }
+
+    let parsed_url = Url::parse(url.trim()).map_err(|error| {
+        CoreError::PluginRuntime(app_plugin_runtime::PluginRuntimeError::ScriptRuntime(
+            format!("fetch.subscription.url 非法：{error}"),
+        ))
+    })?;
+    ensure_http_target_allowed_for_plugin(&parsed_url)?;
+    Ok(())
 }

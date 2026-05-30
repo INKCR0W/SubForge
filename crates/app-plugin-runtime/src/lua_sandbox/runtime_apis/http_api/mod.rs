@@ -17,7 +17,7 @@ use crate::{PluginRuntimeError, PluginRuntimeResult};
 mod cookies;
 mod headers;
 mod runtime;
-mod target_guard;
+pub(crate) mod target_guard;
 
 pub(super) fn register_http_api(
     lua: &Lua,

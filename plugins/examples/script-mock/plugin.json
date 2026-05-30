@@ -15,6 +15,7 @@
     "fetch": "scripts/fetch.lua"
   },
   "capabilities": [
+    "http",
     "secret",
     "log"
   ],

@@ -4,6 +4,8 @@ use mlua::Error as LuaError;
 use reqwest::Url;
 use reqwest::redirect::Policy;
 
+use crate::{PluginRuntimeError, PluginRuntimeResult};
+
 pub(super) fn redirect_policy(max_redirects: usize) -> Policy {
     let default_policy = Policy::limited(max_redirects);
     Policy::custom(move |attempt| {
@@ -15,14 +17,29 @@ pub(super) fn redirect_policy(max_redirects: usize) -> Policy {
 }
 
 pub(super) fn ensure_allowed_target(url: &Url) -> Result<(), LuaError> {
+    ensure_http_target_allowed_for_plugin(url).map_err(plugin_runtime_error_to_lua_error)
+}
+
+pub fn ensure_http_target_allowed_for_plugin(url: &Url) -> PluginRuntimeResult<()> {
     ensure_allowed_redirect_chain(url, &[])
 }
 
-fn ensure_allowed_redirect_chain(url: &Url, previous: &[Url]) -> Result<(), LuaError> {
+pub fn http_target_redirect_policy_for_plugin(max_redirects: usize) -> Policy {
+    redirect_policy(max_redirects)
+}
+
+fn plugin_runtime_error_to_lua_error(error: PluginRuntimeError) -> LuaError {
+    match error {
+        PluginRuntimeError::ScriptRuntime(message) => LuaError::runtime(message),
+        other => LuaError::runtime(other.to_string()),
+    }
+}
+
+fn ensure_allowed_redirect_chain(url: &Url, previous: &[Url]) -> PluginRuntimeResult<()> {
     match url.scheme() {
         "http" | "https" => {}
         scheme => {
-            return Err(LuaError::runtime(format!(
+            return Err(PluginRuntimeError::ScriptRuntime(format!(
                 "http.request 仅支持 http/https，当前为：{scheme}"
             )));
         }
@@ -30,24 +47,26 @@ fn ensure_allowed_redirect_chain(url: &Url, previous: &[Url]) -> Result<(), LuaE
 
     let host = url
         .host_str()
-        .ok_or_else(|| LuaError::runtime("http.request 缺少 host"))?;
+        .ok_or_else(|| PluginRuntimeError::ScriptRuntime("http.request 缺少 host".to_string()))?;
     let port = url
         .port_or_known_default()
-        .ok_or_else(|| LuaError::runtime("http.request 端口无效"))?;
+        .ok_or_else(|| PluginRuntimeError::ScriptRuntime("http.request 端口无效".to_string()))?;
     let addresses = resolve_host_ips(host, port)?;
     if addresses.is_empty() {
-        return Err(LuaError::runtime("http.request 无法解析目标地址"));
+        return Err(PluginRuntimeError::ScriptRuntime(
+            "http.request 无法解析目标地址".to_string(),
+        ));
     }
 
     for ip in addresses {
         if is_forbidden_ip(ip) {
             if previous.is_empty() {
-                return Err(LuaError::runtime(format!(
+                return Err(PluginRuntimeError::ScriptRuntime(format!(
                     "http.request 目标地址不允许（内网/保留地址）：{}",
                     ip
                 )));
             }
-            return Err(LuaError::runtime(format!(
+            return Err(PluginRuntimeError::ScriptRuntime(format!(
                 "http.request 重定向目标地址不允许（内网/保留地址）：{}，url={}，hop={}",
                 ip,
                 url,
@@ -59,7 +78,7 @@ fn ensure_allowed_redirect_chain(url: &Url, previous: &[Url]) -> Result<(), LuaE
     Ok(())
 }
 
-fn resolve_host_ips(host: &str, port: u16) -> Result<Vec<IpAddr>, LuaError> {
+fn resolve_host_ips(host: &str, port: u16) -> PluginRuntimeResult<Vec<IpAddr>> {
     if let Ok(ip) = host.parse::<IpAddr>() {
         return Ok(vec![ip]);
     }
@@ -68,7 +87,9 @@ fn resolve_host_ips(host: &str, port: u16) -> Result<Vec<IpAddr>, LuaError> {
     socket_address
         .to_socket_addrs()
         .map(|iter| iter.map(|addr| addr.ip()).collect::<Vec<_>>())
-        .map_err(|error| LuaError::runtime(format!("http.request DNS 解析失败：{error}")))
+        .map_err(|error| {
+            PluginRuntimeError::ScriptRuntime(format!("http.request DNS 解析失败：{error}"))
+        })
 }
 
 fn is_forbidden_ip(ip: IpAddr) -> bool {

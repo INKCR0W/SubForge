@@ -22,6 +22,10 @@ mod log_api;
 mod secret_api;
 mod time_api;
 
+pub use http_api::target_guard::{
+    ensure_http_target_allowed_for_plugin, http_target_redirect_policy_for_plugin,
+};
+
 pub(super) type CookieStore = Arc<Mutex<HashMap<String, CookieEntry>>>;
 
 #[derive(Debug, Deserialize)]
