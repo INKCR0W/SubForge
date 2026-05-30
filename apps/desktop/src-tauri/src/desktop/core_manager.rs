@@ -551,13 +551,128 @@ fn apply_desktop_secret_backend_args(command: &mut Command) {
                     command.arg("--secret-key").arg(secret_key);
                 }
             }
-            return;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_desktop_secret_backend_args;
+    use std::ffi::{OsStr, OsString};
+    use std::process::Command;
+    use std::sync::{Mutex, MutexGuard};
+
+    static DESKTOP_SECRET_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct DesktopSecretEnvGuard {
+        _lock: MutexGuard<'static, ()>,
+        previous_backend: Option<OsString>,
+        previous_secret_key: Option<OsString>,
+    }
+
+    impl DesktopSecretEnvGuard {
+        fn set(backend: Option<&str>, secret_key: Option<&str>) -> Self {
+            let lock = DESKTOP_SECRET_ENV_LOCK
+                .lock()
+                .expect("Desktop secret 环境变量测试锁异常");
+            let guard = Self {
+                _lock: lock,
+                previous_backend: std::env::var_os("SUBFORGE_DESKTOP_SECRETS_BACKEND"),
+                previous_secret_key: std::env::var_os("SUBFORGE_DESKTOP_SECRET_KEY"),
+            };
+
+            set_env_var("SUBFORGE_DESKTOP_SECRETS_BACKEND", backend.map(OsStr::new));
+            set_env_var("SUBFORGE_DESKTOP_SECRET_KEY", secret_key.map(OsStr::new));
+
+            guard
         }
     }
 
-    command
-        .arg("--secrets-backend")
-        .arg("file")
-        .arg("--secret-key")
-        .arg("subforge-desktop-secret-key");
+    impl Drop for DesktopSecretEnvGuard {
+        fn drop(&mut self) {
+            set_env_var(
+                "SUBFORGE_DESKTOP_SECRETS_BACKEND",
+                self.previous_backend.as_deref(),
+            );
+            set_env_var(
+                "SUBFORGE_DESKTOP_SECRET_KEY",
+                self.previous_secret_key.as_deref(),
+            );
+        }
+    }
+
+    fn set_env_var(name: &str, value: Option<&OsStr>) {
+        // SAFETY: 这些测试通过 DESKTOP_SECRET_ENV_LOCK 串行化对相关进程环境变量的读写，
+        // 并在 guard drop 时恢复原值，避免同组测试并发修改全局环境。
+        unsafe {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+    }
+
+    fn command_args_with_secret_env(
+        backend: Option<&str>,
+        secret_key: Option<&str>,
+    ) -> Vec<String> {
+        let _env = DesktopSecretEnvGuard::set(backend, secret_key);
+        let mut command = Command::new("subforge-core");
+        apply_desktop_secret_backend_args(&mut command);
+        command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn default_launch_does_not_pass_hardcoded_file_secret_key() {
+        let args = command_args_with_secret_env(None, None);
+
+        assert!(
+            !args.iter().any(|arg| arg == "subforge-desktop-secret-key"),
+            "默认 Desktop 启动参数不得包含源码硬编码的 file SecretStore 主密钥"
+        );
+        assert!(
+            !args.iter().any(|arg| arg == "--secrets-backend"),
+            "默认 Desktop 应让 Core 使用默认 secret backend，而不是强制 file backend"
+        );
+        assert!(
+            !args.iter().any(|arg| arg == "--secret-key"),
+            "默认 Desktop 不应传递 secret-key 参数"
+        );
+    }
+
+    #[test]
+    fn explicit_file_backend_without_secret_key_does_not_invent_default_key() {
+        let args = command_args_with_secret_env(Some("file"), None);
+
+        assert_eq!(args, vec!["--secrets-backend", "file"]);
+        assert!(
+            !args.iter().any(|arg| arg == "subforge-desktop-secret-key"),
+            "显式 file backend 未提供密钥时，应让 Core 报错，不得补硬编码主密钥"
+        );
+    }
+
+    #[test]
+    fn explicit_file_backend_with_secret_key_passes_override_key() {
+        let args = command_args_with_secret_env(Some("file"), Some("dev-random-key"));
+
+        assert_eq!(
+            args,
+            vec![
+                "--secrets-backend",
+                "file",
+                "--secret-key",
+                "dev-random-key"
+            ]
+        );
+    }
+
+    #[test]
+    fn explicit_non_file_backend_ignores_desktop_secret_key_env() {
+        let args = command_args_with_secret_env(Some("keyring"), Some("unused-key"));
+
+        assert_eq!(args, vec!["--secrets-backend", "keyring"]);
+    }
 }
