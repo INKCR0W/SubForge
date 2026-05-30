@@ -1,3 +1,4 @@
+use app_common::redact_sensitive_text;
 use app_plugin_runtime::PluginRuntimeError;
 use app_secrets::SecretError;
 use app_storage::StorageError;
@@ -38,6 +39,10 @@ pub enum CoreError {
 pub type CoreResult<T> = Result<T, CoreError>;
 
 impl CoreError {
+    pub fn sanitized_message(&self) -> String {
+        redact_sensitive_text(&self.to_string())
+    }
+
     pub fn code(&self) -> &'static str {
         match self {
             Self::PluginRuntime(error) => error.code(),

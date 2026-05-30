@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{Cursor, Write};
 use std::path::{Component, Path};
 
-use app_common::{AppSetting, ErrorResponse, Plugin};
+use app_common::{AppSetting, ErrorResponse, Plugin, redact_sensitive_text};
 use app_core::{CoreError, SourceWithConfig};
 use app_plugin_runtime::PluginRuntimeError;
 use app_storage::{
@@ -207,7 +207,7 @@ pub(crate) fn emit_event(
 ) {
     let payload = ApiEvent {
         event: event.to_string(),
-        message,
+        message: redact_sensitive_text(&message),
         source_id,
         timestamp: current_timestamp_rfc3339()
             .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string()),
@@ -290,33 +290,57 @@ pub(crate) fn map_settings(settings: Vec<AppSetting>) -> BTreeMap<String, String
 pub(crate) fn core_error_to_response(error: CoreError) -> (StatusCode, Json<ErrorResponse>) {
     let code = error.code().to_string();
     match error {
-        CoreError::ConfigInvalid(message) => {
-            error_response(StatusCode::BAD_REQUEST, &code, message, false)
-        }
-        CoreError::PluginAlreadyInstalled(message) => {
-            error_response(StatusCode::CONFLICT, &code, message, false)
-        }
-        CoreError::PluginNotFound(message) | CoreError::SourceNotFound(message) => {
-            error_response(StatusCode::NOT_FOUND, &code, message, false)
-        }
-        CoreError::RefreshAlreadyRunning(message) => {
-            error_response(StatusCode::CONFLICT, &code, message, true)
-        }
-        CoreError::SubscriptionFetch(message) => {
-            error_response(StatusCode::BAD_GATEWAY, &code, message, true)
-        }
-        CoreError::SubscriptionParse(message) => {
-            error_response(StatusCode::BAD_REQUEST, &code, message, false)
-        }
+        CoreError::ConfigInvalid(message) => error_response(
+            StatusCode::BAD_REQUEST,
+            &code,
+            redact_sensitive_text(&message),
+            false,
+        ),
+        CoreError::PluginAlreadyInstalled(message) => error_response(
+            StatusCode::CONFLICT,
+            &code,
+            redact_sensitive_text(&message),
+            false,
+        ),
+        CoreError::PluginNotFound(message) | CoreError::SourceNotFound(message) => error_response(
+            StatusCode::NOT_FOUND,
+            &code,
+            redact_sensitive_text(&message),
+            false,
+        ),
+        CoreError::RefreshAlreadyRunning(message) => error_response(
+            StatusCode::CONFLICT,
+            &code,
+            redact_sensitive_text(&message),
+            true,
+        ),
+        CoreError::SubscriptionFetch(message) => error_response(
+            StatusCode::BAD_GATEWAY,
+            &code,
+            redact_sensitive_text(&message),
+            true,
+        ),
+        CoreError::SubscriptionParse(message) => error_response(
+            StatusCode::BAD_REQUEST,
+            &code,
+            redact_sensitive_text(&message),
+            false,
+        ),
         CoreError::PluginRuntime(PluginRuntimeError::ScriptTimeout(message))
         | CoreError::PluginRuntime(PluginRuntimeError::ScriptLimit(message))
-        | CoreError::PluginRuntime(PluginRuntimeError::ScriptRuntime(message)) => {
-            error_response(StatusCode::BAD_REQUEST, &code, message, true)
-        }
+        | CoreError::PluginRuntime(PluginRuntimeError::ScriptRuntime(message)) => error_response(
+            StatusCode::BAD_REQUEST,
+            &code,
+            redact_sensitive_text(&message),
+            true,
+        ),
         CoreError::PluginRuntime(PluginRuntimeError::Incompatible(message))
-        | CoreError::PluginRuntime(PluginRuntimeError::Invalid(message)) => {
-            error_response(StatusCode::BAD_REQUEST, &code, message, false)
-        }
+        | CoreError::PluginRuntime(PluginRuntimeError::Invalid(message)) => error_response(
+            StatusCode::BAD_REQUEST,
+            &code,
+            redact_sensitive_text(&message),
+            false,
+        ),
         CoreError::PluginRuntime(PluginRuntimeError::ManifestParse(error)) => error_response(
             StatusCode::BAD_REQUEST,
             &code,
@@ -336,9 +360,12 @@ pub(crate) fn core_error_to_response(error: CoreError) -> (StatusCode, Json<Erro
             false,
         ),
         CoreError::Transport(error) => match error.code() {
-            "E_CONFIG_INVALID" => {
-                error_response(StatusCode::BAD_REQUEST, &code, error.to_string(), false)
-            }
+            "E_CONFIG_INVALID" => error_response(
+                StatusCode::BAD_REQUEST,
+                &code,
+                redact_sensitive_text(&error.to_string()),
+                false,
+            ),
             "E_INTERNAL" => internal_error_response(),
             _ => error_response(
                 StatusCode::BAD_GATEWAY,

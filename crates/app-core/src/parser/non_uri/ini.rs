@@ -133,11 +133,11 @@ fn parse_ini_proxy_line(
 
     let path = take_any(&mut kv, &["ws-path", "path", "obfs-uri"]);
     insert_optional_string(&mut extra, "path", path);
-    let host = take_any(&mut kv, &["ws-headers", "host", "obfs-host"]).and_then(|raw| {
+    let host = take_any(&mut kv, &["ws-headers", "host", "obfs-host"]).map(|raw| {
         if let Some((_, value)) = raw.split_once(':') {
-            Some(value.trim().to_string())
+            value.trim().to_string()
         } else {
-            Some(raw)
+            raw
         }
     });
     insert_optional_string(&mut extra, "host", host);

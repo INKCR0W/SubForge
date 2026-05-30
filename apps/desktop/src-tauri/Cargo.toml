@@ -12,6 +12,7 @@ publish.workspace = true
 tauri-build = { version = "^2.1", features = [] }
 
 [dependencies]
+app-common = { path = "../../../crates/app-common" }
 anyhow.workspace = true
 base64.workspace = true
 reqwest.workspace = true

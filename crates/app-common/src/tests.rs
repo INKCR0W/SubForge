@@ -4,7 +4,7 @@ use crate::{
     AppError, AppSetting, ClashRoutingTemplate, ClashRoutingTemplateGroup, ConfigSchema, Plugin,
     PluginManifest, PluginType, Profile, ProfileSource, ProxyNode, ProxyProtocol, ProxyTransport,
     RoutingTemplateGroupIr, RoutingTemplateIr, RoutingTemplateSourceKernel, SourceInstance,
-    TlsConfig,
+    TlsConfig, redact_sensitive_text,
 };
 
 #[test]
@@ -14,6 +14,45 @@ fn app_error_fields_are_serializable() {
     assert!(json.contains("\"code\":\"E_TEST\""));
     assert!(json.contains("\"message\":\"测试错误\""));
     assert!(json.contains("\"retryable\":false"));
+}
+
+#[test]
+fn redact_sensitive_text_covers_common_secret_shapes() {
+    let input = "Bearer bearer-token token=kv-token password:pwd cookie=session api_key=key \
+         Authorization: Basic basic-token Cookie: sid=cookie-secret";
+    let output = redact_sensitive_text(input);
+
+    assert!(output.contains("Bearer ***"));
+    assert!(output.contains("token=***"));
+    assert!(output.contains("password:***"));
+    assert!(output.contains("cookie=***"));
+    assert!(output.contains("api_key=***"));
+    assert!(output.contains("Authorization: Basic ***"));
+    assert!(output.contains("Cookie: ***"));
+    for secret in [
+        "bearer-token",
+        "kv-token",
+        "pwd",
+        "session",
+        "basic-token",
+        "cookie-secret",
+    ] {
+        assert!(
+            !output.contains(secret),
+            "脱敏输出不应包含敏感值 {secret}，实际：{output}"
+        );
+    }
+}
+
+#[test]
+fn redact_sensitive_text_redacts_url_userinfo_and_query_without_truncating_url() {
+    let output = redact_sensitive_text(
+        "url=https://user:pass@example.com/path?access_token=query-token&safe=ok",
+    );
+
+    assert!(output.contains("***@example.com/path?access_token=***&safe=ok"));
+    assert!(!output.contains("user:pass"));
+    assert!(!output.contains("query-token"));
 }
 
 #[test]

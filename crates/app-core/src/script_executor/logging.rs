@@ -1,18 +1,14 @@
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
+use app_common::redact_sensitive_text;
 use app_plugin_runtime::{RuntimeLogLevel, RuntimeLogSink};
 use app_storage::{Database, ScriptLog, ScriptLogRepository};
-use regex::Regex;
 use time::OffsetDateTime;
 
 use crate::utils::now_rfc3339;
 use crate::{CoreError, CoreResult};
 
 const MAX_LOG_MESSAGE_CHARS: usize = 2048;
-
-static KEY_VALUE_RE: OnceLock<Regex> = OnceLock::new();
-static QUERY_RE: OnceLock<Regex> = OnceLock::new();
-static BEARER_RE: OnceLock<Regex> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct CapturedScriptLog {
@@ -86,29 +82,7 @@ pub(super) fn persist_script_logs(
 }
 
 fn sanitize_script_log_message(message: &str) -> String {
-    let mut sanitized = truncate_message(message);
-    let bearer_re = BEARER_RE.get_or_init(|| {
-        Regex::new(r"(?i)\bbearer\s+[A-Za-z0-9\-._~+/=]+").expect("bearer 脱敏正则必须合法")
-    });
-    sanitized = bearer_re.replace_all(&sanitized, "Bearer ***").to_string();
-
-    let key_value_re = KEY_VALUE_RE.get_or_init(|| {
-        Regex::new(
-            r"(?i)\b(token|access_token|admin_token|password|passwd|cookie|set-cookie|authorization|api_key|apikey|secret)\b(\s*[:=]\s*)([^\s,;]+)",
-        )
-        .expect("key-value 脱敏正则必须合法")
-    });
-    sanitized = key_value_re.replace_all(&sanitized, "$1$2***").to_string();
-
-    let query_re = QUERY_RE.get_or_init(|| {
-        Regex::new(
-            r"(?i)([?&](?:token|access_token|admin_token|password|passwd|api_key|apikey|secret|cookie)=)[^&\s]+",
-        )
-        .expect("query 脱敏正则必须合法")
-    });
-    sanitized = query_re.replace_all(&sanitized, "$1***").to_string();
-
-    sanitized
+    redact_sensitive_text(&truncate_message(message))
 }
 
 fn truncate_message(message: &str) -> String {
@@ -145,7 +119,7 @@ mod tests {
         let input = "url=https://example.com?a=1&token=abc123 Authorization: Bearer sensitive";
         let output = sanitize_script_log_message(input);
         assert!(output.contains("&token=***"));
-        assert!(output.contains("Authorization: ***"));
+        assert!(output.contains("Authorization: Bearer ***"));
         assert!(!output.contains("abc123"));
         assert!(!output.contains("sensitive"));
     }

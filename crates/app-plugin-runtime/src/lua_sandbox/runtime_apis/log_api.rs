@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use app_common::redact_sensitive_text;
 use mlua::Lua;
 
 use super::LOG_PREFIX;
@@ -18,7 +19,11 @@ pub(super) fn register_log_api(
             if let Some(sink) = info_sink.as_ref() {
                 sink.emit(RuntimeLogLevel::Info, &message);
             }
-            safe_stderr_line(&format!("INFO: {} {}", LOG_PREFIX, message));
+            safe_stderr_line(&format!(
+                "INFO: {} {}",
+                LOG_PREFIX,
+                redact_sensitive_text(&message)
+            ));
             Ok(())
         })
         .map_err(map_lua_error)?;
@@ -28,7 +33,11 @@ pub(super) fn register_log_api(
             if let Some(sink) = warn_sink.as_ref() {
                 sink.emit(RuntimeLogLevel::Warn, &message);
             }
-            safe_stderr_line(&format!("WARN: {} {}", LOG_PREFIX, message));
+            safe_stderr_line(&format!(
+                "WARN: {} {}",
+                LOG_PREFIX,
+                redact_sensitive_text(&message)
+            ));
             Ok(())
         })
         .map_err(map_lua_error)?;
@@ -38,7 +47,11 @@ pub(super) fn register_log_api(
             if let Some(sink) = error_sink.as_ref() {
                 sink.emit(RuntimeLogLevel::Error, &message);
             }
-            safe_stderr_line(&format!("ERROR: {} {}", LOG_PREFIX, message));
+            safe_stderr_line(&format!(
+                "ERROR: {} {}",
+                LOG_PREFIX,
+                redact_sensitive_text(&message)
+            ));
             Ok(())
         })
         .map_err(map_lua_error)?;

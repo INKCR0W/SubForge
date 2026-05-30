@@ -145,7 +145,7 @@ impl<'a> Engine<'a> {
                             &refresh_job_id,
                             &finished_at,
                             error.code(),
-                            &error.to_string(),
+                            &error.sanitized_message(),
                         );
                         return Err(error);
                     }
@@ -162,7 +162,7 @@ impl<'a> Engine<'a> {
             Err(error) => {
                 let finished_at = finished_at_timestamp();
                 let error_code = error.code().to_string();
-                let error_message = error.to_string();
+                let error_message = error.sanitized_message();
                 let _ = refresh_repository.mark_failed(
                     &refresh_job_id,
                     &finished_at,

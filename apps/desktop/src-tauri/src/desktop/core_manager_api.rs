@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
+use app_common::redact_sensitive_text;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use reqwest::Method;
@@ -224,18 +225,18 @@ fn sanitize_core_response(
 ) -> (BTreeMap<String, String>, String) {
     if let Some(token) = admin_token.filter(|token| !token.is_empty()) {
         for header_value in headers.values_mut() {
-            if header_value.contains(token) {
-                *header_value = header_value.replace(token, REDACTED_VALUE);
-            }
+            *header_value = header_value.replace(token, REDACTED_VALUE);
         }
+    }
+    for header_value in headers.values_mut() {
+        *header_value = redact_sensitive_text(header_value);
     }
 
     let mut sanitized_body = body;
     if let Some(token) = admin_token.filter(|token| !token.is_empty()) {
-        if sanitized_body.contains(token) {
-            sanitized_body = sanitized_body.replace(token, REDACTED_VALUE);
-        }
+        sanitized_body = sanitized_body.replace(token, REDACTED_VALUE);
     }
+    sanitized_body = redact_sensitive_text(&sanitized_body);
 
     if let Ok(mut payload) = serde_json::from_str::<Value>(&sanitized_body) {
         redact_admin_token_fields(&mut payload);
@@ -322,7 +323,7 @@ mod tests {
 
         assert_eq!(
             sanitized_headers.get("x-debug"),
-            Some(&format!("token={REDACTED_VALUE}"))
+            Some(&"token=***".to_string())
         );
 
         let payload: serde_json::Value =
@@ -353,7 +354,28 @@ mod tests {
         let (_headers, sanitized_body) =
             sanitize_core_response(headers, body, Some("desktop-admin-token"));
 
-        assert_eq!(sanitized_body, format!("debug token: {REDACTED_VALUE}"));
+        assert_eq!(sanitized_body, "debug token: ***");
+    }
+
+    #[test]
+    fn sanitize_response_redacts_generic_sensitive_body_and_headers() {
+        let mut headers = BTreeMap::new();
+        headers.insert(
+            "x-debug".to_string(),
+            "Authorization: Bearer response-token".to_string(),
+        );
+        let body = "error password=response-password api_key=response-key".to_string();
+
+        let (sanitized_headers, sanitized_body) = sanitize_core_response(headers, body, None);
+
+        assert_eq!(
+            sanitized_headers.get("x-debug"),
+            Some(&"Authorization: Bearer ***".to_string())
+        );
+        assert!(sanitized_body.contains("password=***"));
+        assert!(sanitized_body.contains("api_key=***"));
+        assert!(!sanitized_body.contains("response-password"));
+        assert!(!sanitized_body.contains("response-key"));
     }
 
     #[tokio::test]

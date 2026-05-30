@@ -1,3 +1,4 @@
+use app_common::redact_sensitive_text;
 use mlua::Error as LuaError;
 
 use crate::PluginRuntimeError;
@@ -34,7 +35,7 @@ pub(super) fn map_lua_error(error: LuaError) -> PluginRuntimeError {
         return PluginRuntimeError::ScriptLimit(format!("脚本内存超过上限：{message}"));
     }
 
-    PluginRuntimeError::ScriptRuntime(error.to_string())
+    PluginRuntimeError::ScriptRuntime(redact_sensitive_text(&error.to_string()))
 }
 
 pub(super) fn map_secret_error(action: &str, error: app_secrets::SecretError) -> LuaError {

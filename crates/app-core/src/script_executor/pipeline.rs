@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use app_common::redact_sensitive_text;
 use app_plugin_runtime::{LoadedPlugin, LuaSandbox};
 use serde_json::{Map, Value};
 
@@ -132,9 +133,10 @@ fn parse_state_update(object: &Map<String, Value>) -> CoreResult<StateUpdate> {
 }
 
 fn resolve_stage_error_message(raw_error: Option<&Value>) -> String {
-    raw_error
+    let message = raw_error
         .and_then(format_script_error)
-        .unwrap_or_else(|| "脚本返回失败且未提供 error".to_string())
+        .unwrap_or_else(|| "脚本返回失败且未提供 error".to_string());
+    redact_sensitive_text(&message)
 }
 
 fn format_script_error(value: &Value) -> Option<String> {

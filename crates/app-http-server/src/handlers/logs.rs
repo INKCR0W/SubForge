@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use app_common::redact_sensitive_text;
+
 use super::*;
 
 const DEFAULT_LOG_LIMIT: usize = 20;
@@ -76,7 +78,7 @@ pub(crate) async fn list_logs_handler(
                     source_id: log.source_instance_id,
                     plugin_id: log.plugin_id,
                     level: log.level,
-                    message: log.message,
+                    message: redact_sensitive_text(&log.message),
                     created_at: log.created_at,
                 });
         }
@@ -106,7 +108,9 @@ pub(crate) async fn list_logs_handler(
                 finished_at: job.finished_at,
                 node_count: job.node_count,
                 error_code: job.error_code,
-                error_message: job.error_message,
+                error_message: job
+                    .error_message
+                    .map(|message| redact_sensitive_text(&message)),
                 script_logs: include_script_logs.then(|| {
                     script_logs_by_refresh_job
                         .get(&job_id)

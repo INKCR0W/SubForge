@@ -3,6 +3,7 @@
 mod error;
 mod models;
 mod plugin;
+mod sanitizer;
 #[cfg(test)]
 mod tests;
 
@@ -16,3 +17,4 @@ pub use plugin::{
     ConfigSchema, ConfigSchemaProperty, ConfigSchemaUi, PluginEntrypoints, PluginManifest,
     PluginType,
 };
+pub use sanitizer::redact_sensitive_text;

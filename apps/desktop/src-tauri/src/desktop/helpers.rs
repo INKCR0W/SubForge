@@ -6,6 +6,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
+use app_common::redact_sensitive_text;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 
@@ -125,7 +126,9 @@ where
                     let trimmed = line.trim();
                     if !trimmed.is_empty() && forwarding_enabled {
                         // GUI 场景下 stdout/stderr 句柄可能不可用；写失败时降级为仅保留管道读取，避免线程 panic 导致子进程管道被提前关闭。
-                        forwarding_enabled = try_forward_log_line(stream_name, trimmed).is_ok();
+                        forwarding_enabled =
+                            try_forward_log_line(stream_name, &redact_sensitive_text(trimmed))
+                                .is_ok();
                     }
                 }
                 Err(_) => break,
@@ -158,8 +161,8 @@ pub(super) fn parse_core_event_payload(event_name: &str, data: &str) -> CoreEven
             let message = value
                 .get("message")
                 .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| data.to_string());
+                .map(redact_sensitive_text)
+                .unwrap_or_else(|| redact_sensitive_text(data));
             let source_id = value
                 .get("source_id")
                 .and_then(Value::as_str)
@@ -178,7 +181,7 @@ pub(super) fn parse_core_event_payload(event_name: &str, data: &str) -> CoreEven
         }
         Err(_) => CoreEventPayload {
             event: fallback_event,
-            message: data.to_string(),
+            message: redact_sensitive_text(data),
             source_id: None,
             timestamp: None,
         },
@@ -276,4 +279,23 @@ pub(super) fn terminate_child(child: &mut Child) -> Result<()> {
     child.kill().context("Core 进程未按时退出，强制结束失败")?;
     let _ = child.wait();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_core_event_payload;
+
+    #[test]
+    fn parse_core_event_payload_redacts_sensitive_message() {
+        let payload = parse_core_event_payload(
+            "refresh:failed",
+            r#"{"event":"refresh:failed","message":"Bearer event-token token=abc","source_id":"s-1","timestamp":"2026-05-30T00:00:00Z"}"#,
+        );
+
+        assert_eq!(payload.event, "refresh:failed");
+        assert!(payload.message.contains("Bearer ***"));
+        assert!(payload.message.contains("token=***"));
+        assert!(!payload.message.contains("event-token"));
+        assert!(!payload.message.contains("abc"));
+    }
 }

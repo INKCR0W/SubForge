@@ -75,7 +75,7 @@ pub(crate) async fn get_profile_stash_handler(
 ) -> ApiResponseResult {
     let _ = query.token.as_deref();
     let cache_entry = load_profile_cache_entry(&state, &id)?;
-    let body = StashTransformer::default()
+    let body = StashTransformer
         .transform(&cache_entry.nodes, &cache_entry.profile)
         .map_err(transform_error_to_response)?;
     let headers = build_subscription_headers(
@@ -94,7 +94,7 @@ pub(crate) async fn get_profile_surge_handler(
 ) -> ApiResponseResult {
     let _ = query.token.as_deref();
     let cache_entry = load_profile_cache_entry(&state, &id)?;
-    let body = NonUriTextTransformer::default()
+    let body = NonUriTextTransformer
         .transform_surge(&cache_entry.nodes, &cache_entry.profile)
         .map_err(transform_error_to_response)?;
     let headers = build_subscription_headers(
@@ -113,7 +113,7 @@ pub(crate) async fn get_profile_loon_handler(
 ) -> ApiResponseResult {
     let _ = query.token.as_deref();
     let cache_entry = load_profile_cache_entry(&state, &id)?;
-    let body = NonUriTextTransformer::default()
+    let body = NonUriTextTransformer
         .transform_loon(&cache_entry.nodes, &cache_entry.profile)
         .map_err(transform_error_to_response)?;
     let headers = build_subscription_headers(
@@ -132,7 +132,7 @@ pub(crate) async fn get_profile_qx_handler(
 ) -> ApiResponseResult {
     let _ = query.token.as_deref();
     let cache_entry = load_profile_cache_entry(&state, &id)?;
-    let body = NonUriTextTransformer::default()
+    let body = NonUriTextTransformer
         .transform_qx(&cache_entry.nodes, &cache_entry.profile)
         .map_err(transform_error_to_response)?;
     let headers = build_subscription_headers(
@@ -151,7 +151,7 @@ pub(crate) async fn get_profile_v2ray_uri_handler(
 ) -> ApiResponseResult {
     let _ = query.token.as_deref();
     let cache_entry = load_profile_cache_entry(&state, &id)?;
-    let body = V2RayUriTransformer::default()
+    let body = V2RayUriTransformer
         .transform(&cache_entry.nodes, &cache_entry.profile)
         .map_err(transform_error_to_response)?;
     let headers = build_subscription_headers(

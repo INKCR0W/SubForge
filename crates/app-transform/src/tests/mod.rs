@@ -607,7 +607,7 @@ fn v2ray_uri_transform_outputs_plain_uri_lines() {
             ("password", Value::String("v2ray-pass".to_string())),
         ],
     );
-    let payload = V2RayUriTransformer::default()
+    let payload = V2RayUriTransformer
         .transform(&[node], &profile)
         .expect("v2ray-uri 导出失败");
     assert!(payload.starts_with("ss://"));
@@ -628,8 +628,8 @@ fn stash_transformer_matches_clash_output() {
         ],
     );
 
-    let stash = StashTransformer::default()
-        .transform(&[node.clone()], &profile)
+    let stash = StashTransformer
+        .transform(std::slice::from_ref(&node), &profile)
         .expect("stash 导出失败");
     let clash = ClashTransformer::default()
         .transform(&[node], &profile)
@@ -650,7 +650,7 @@ fn non_uri_text_transformer_outputs_ini_style_line() {
             ("password", Value::String("surge-pass".to_string())),
         ],
     );
-    let payload = NonUriTextTransformer::default()
+    let payload = NonUriTextTransformer
         .transform_surge(&[node], &profile)
         .expect("surge 文本导出失败");
     assert!(payload.contains("Surge-SS = ss,"));
