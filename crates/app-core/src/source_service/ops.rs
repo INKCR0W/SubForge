@@ -7,7 +7,7 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::source_service::{PreparedConfig, SourceService};
-use crate::utils::{masked_config, now_rfc3339, plugin_scope};
+use crate::utils::{masked_config, now_rfc3339, source_scope};
 use crate::{CoreError, CoreResult, SourceWithConfig};
 
 impl<'a> SourceService<'a> {
@@ -49,7 +49,7 @@ impl<'a> SourceService<'a> {
             for key in prepared.secret.keys() {
                 let _ = self
                     .secret_store
-                    .delete(&plugin_scope(&source.plugin_id), key.as_str());
+                    .delete(&source_scope(&source.id), key.as_str());
             }
             return Err(error);
         }
@@ -125,10 +125,13 @@ impl<'a> SourceService<'a> {
         let loaded = self.load_installed_plugin(&source.plugin_id)?;
         let config_repository = SourceConfigRepository::new(self.db);
         let previous_non_secret = config_repository.get_all(&source.id)?;
-        let scope = plugin_scope(&source.plugin_id);
-        let previous_secret =
+        let scope = source_scope(&source.id);
+        let previous_source_secret =
             self.snapshot_secret_values(&scope, &loaded.manifest.secret_fields)?;
-        let effective_config = self.apply_secret_placeholders(&loaded, config, &previous_secret)?;
+        let previous_effective_secret =
+            self.snapshot_source_secret_values(&source, &loaded.manifest.secret_fields)?;
+        let effective_config =
+            self.apply_secret_placeholders(&loaded, config, &previous_effective_secret)?;
         let prepared = self.validate_and_split_config(&loaded, &effective_config)?;
 
         if let Err(error) =
@@ -138,7 +141,7 @@ impl<'a> SourceService<'a> {
             let _ = self.restore_secret_values(
                 &scope,
                 &loaded.manifest.secret_fields,
-                &previous_secret,
+                &previous_source_secret,
             );
             return Err(error);
         }
@@ -149,7 +152,7 @@ impl<'a> SourceService<'a> {
             let _ = self.restore_secret_values(
                 &scope,
                 &loaded.manifest.secret_fields,
-                &previous_secret,
+                &previous_source_secret,
             );
             return Err(error.into());
         }
@@ -166,7 +169,7 @@ impl<'a> SourceService<'a> {
             .get_by_id(source_id)?
             .ok_or_else(|| CoreError::SourceNotFound(source_id.to_string()))?;
         let loaded = self.load_installed_plugin(&source.plugin_id)?;
-        let scope = plugin_scope(&source.plugin_id);
+        let scope = source_scope(&source.id);
         let previous_secret =
             self.snapshot_secret_values(&scope, &loaded.manifest.secret_fields)?;
 
@@ -202,7 +205,7 @@ impl<'a> SourceService<'a> {
     ) -> CoreResult<()> {
         config_repository.replace_all(&source.id, &prepared.non_secret)?;
 
-        let scope = plugin_scope(&source.plugin_id);
+        let scope = source_scope(&source.id);
         for (key, value) in &prepared.secret {
             self.secret_store.set(&scope, key, value)?;
         }

@@ -317,6 +317,101 @@ fn secret_api_isolation_is_scoped_to_current_plugin() {
 }
 
 #[test]
+fn secret_api_uses_current_source_scope_when_configured() {
+    let shared_secret_store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    shared_secret_store
+        .set("source:source-a", "password", "a-secret")
+        .expect("预置来源 A 密钥应成功");
+    shared_secret_store
+        .set("source:source-b", "password", "b-secret")
+        .expect("预置来源 B 密钥应成功");
+    shared_secret_store
+        .set("plugin:plugin.shared", "password", "plugin-secret")
+        .expect("预置 legacy 插件密钥应成功");
+
+    let script_path = write_temp_script(
+        "secret-source-scope",
+        r#"
+            function run()
+                local current = secret.get("password")
+                secret.set("session_token", "source-a-token")
+                return {
+                    current = current,
+                    saved = secret.get("session_token")
+                }
+            end
+        "#,
+    );
+
+    let config = LuaSandboxConfig::default()
+        .with_plugin_id("plugin.shared")
+        .with_source_id("source-a")
+        .with_secret_store(Arc::clone(&shared_secret_store));
+    let sandbox = LuaSandbox::new_with_config(config).expect("沙箱初始化应成功");
+    let result = sandbox
+        .exec_file(&script_path, "run", &[])
+        .expect("secret API 应可调用");
+
+    assert_eq!(result["current"], json!("a-secret"));
+    assert_eq!(result["saved"], json!("source-a-token"));
+    let source_a_token = shared_secret_store
+        .get("source:source-a", "session_token")
+        .expect("来源 A 新密钥应存在");
+    assert_eq!(source_a_token.as_str(), "source-a-token");
+    let source_b_password = shared_secret_store
+        .get("source:source-b", "password")
+        .expect("来源 B 密钥应保持不变");
+    assert_eq!(source_b_password.as_str(), "b-secret");
+    let plugin_password = shared_secret_store
+        .get("plugin:plugin.shared", "password")
+        .expect("legacy 插件密钥不应被 source 写入覆盖");
+    assert_eq!(plugin_password.as_str(), "plugin-secret");
+    let plugin_token = shared_secret_store.get("plugin:plugin.shared", "session_token");
+    assert!(
+        plugin_token.is_err(),
+        "来源级 secret.set 不应写入 plugin scope"
+    );
+    cleanup_script(&script_path);
+}
+
+#[test]
+fn secret_api_migrates_legacy_plugin_secret_to_source_scope() {
+    let shared_secret_store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    shared_secret_store
+        .set("plugin:plugin.legacy", "password", "legacy-secret")
+        .expect("预置 legacy 插件密钥应成功");
+
+    let script_path = write_temp_script(
+        "secret-legacy-migration",
+        r#"
+            function run()
+                return { password = secret.get("password") }
+            end
+        "#,
+    );
+
+    let config = LuaSandboxConfig::default()
+        .with_plugin_id("plugin.legacy")
+        .with_source_id("source-legacy")
+        .with_secret_store(Arc::clone(&shared_secret_store));
+    let sandbox = LuaSandbox::new_with_config(config).expect("沙箱初始化应成功");
+    let result = sandbox
+        .exec_file(&script_path, "run", &[])
+        .expect("legacy secret 应可被读取并迁移");
+
+    assert_eq!(result["password"], json!("legacy-secret"));
+    let migrated = shared_secret_store
+        .get("source:source-legacy", "password")
+        .expect("读取 legacy secret 后应写回 source scope");
+    assert_eq!(migrated.as_str(), "legacy-secret");
+    let legacy = shared_secret_store
+        .get("plugin:plugin.legacy", "password")
+        .expect("迁移不应删除 legacy plugin scope");
+    assert_eq!(legacy.as_str(), "legacy-secret");
+    cleanup_script(&script_path);
+}
+
+#[test]
 fn enforces_http_request_count_limit() {
     let script_path = write_temp_script(
         "http-limit",

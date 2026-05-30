@@ -87,6 +87,7 @@ pub struct LuaSandboxConfig {
     pub instruction_hook_step: u32,
     pub network_profile: String,
     pub plugin_id: String,
+    pub source_id: Option<String>,
     pub capabilities: Vec<String>,
     pub secret_store: Arc<dyn SecretStore>,
     pub log_sink: Option<Arc<dyn RuntimeLogSink>>,
@@ -101,6 +102,7 @@ impl std::fmt::Debug for LuaSandboxConfig {
             .field("instruction_hook_step", &self.instruction_hook_step)
             .field("network_profile", &self.network_profile)
             .field("plugin_id", &self.plugin_id)
+            .field("source_id", &self.source_id)
             .field("capabilities", &self.capabilities)
             .field("secret_store", &"<secret-store>")
             .field(
@@ -120,6 +122,7 @@ impl Default for LuaSandboxConfig {
             instruction_hook_step: DEFAULT_HOOK_STEP,
             network_profile: DEFAULT_NETWORK_PROFILE.to_string(),
             plugin_id: DEFAULT_PLUGIN_ID.to_string(),
+            source_id: None,
             capabilities: SUPPORTED_RUNTIME_CAPABILITIES
                 .iter()
                 .map(|capability| (*capability).to_string())
@@ -158,6 +161,11 @@ impl LuaSandboxConfig {
 
     pub fn with_plugin_id(mut self, plugin_id: impl Into<String>) -> Self {
         self.plugin_id = plugin_id.into();
+        self
+    }
+
+    pub fn with_source_id(mut self, source_id: impl Into<String>) -> Self {
+        self.source_id = Some(source_id.into());
         self
     }
 
@@ -209,7 +217,15 @@ impl LuaSandbox {
             )));
         }
 
-        let secret_scope = format!("plugin:{}", config.plugin_id);
+        let secret_scope = config
+            .source_id
+            .as_ref()
+            .map(|source_id| format!("source:{source_id}"))
+            .unwrap_or_else(|| format!("plugin:{}", config.plugin_id));
+        let legacy_secret_scope = config
+            .source_id
+            .as_ref()
+            .map(|_| format!("plugin:{}", config.plugin_id));
         config
             .secret_store
             .list_keys(&secret_scope)
@@ -231,6 +247,7 @@ impl LuaSandbox {
             &config,
             Arc::clone(&cookie_store),
             secret_scope,
+            legacy_secret_scope,
             Arc::clone(&http_request_counter),
             config.log_sink.clone(),
         )?;

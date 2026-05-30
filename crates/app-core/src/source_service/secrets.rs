@@ -6,7 +6,7 @@ use app_secrets::SecretError;
 use serde_json::Value;
 
 use crate::source_service::SourceService;
-use crate::utils::{inflate_typed_value, plugin_scope};
+use crate::utils::{inflate_typed_value, plugin_scope, source_scope};
 use crate::{CoreError, CoreResult, SECRET_PLACEHOLDER};
 
 impl<'a> SourceService<'a> {
@@ -29,14 +29,16 @@ impl<'a> SourceService<'a> {
             }
         }
 
-        let scope = plugin_scope(&source.plugin_id);
+        let scope = source_scope(&source.id);
+        let legacy_scope = plugin_scope(&source.plugin_id);
         let secret_keys = if mask_secret {
-            Some(
-                self.secret_store
-                    .list_keys(&scope)?
-                    .into_iter()
-                    .collect::<BTreeSet<_>>(),
-            )
+            let mut keys = self
+                .secret_store
+                .list_keys(&scope)?
+                .into_iter()
+                .collect::<BTreeSet<_>>();
+            keys.extend(self.secret_store.list_keys(&legacy_scope)?);
+            Some(keys)
         } else {
             None
         };
@@ -51,7 +53,7 @@ impl<'a> SourceService<'a> {
             let Some(property) = loaded.schema.properties.get(key) else {
                 continue;
             };
-            match self.secret_store.get(&scope, key) {
+            match self.get_source_secret_with_legacy_migration(&scope, &legacy_scope, key) {
                 Ok(secret) => {
                     let value = inflate_typed_value(key, property, secret.as_str())?;
                     config.insert(key.clone(), value);
@@ -71,6 +73,31 @@ impl<'a> SourceService<'a> {
         let mut snapshot = BTreeMap::new();
         for secret_key in secret_fields {
             match self.secret_store.get(scope, secret_key) {
+                Ok(value) => {
+                    snapshot.insert(secret_key.clone(), value.to_string());
+                }
+                Err(SecretError::SecretMissing(_)) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(snapshot)
+    }
+
+    pub(super) fn snapshot_source_secret_values(
+        &self,
+        source: &SourceInstance,
+        secret_fields: &[String],
+    ) -> CoreResult<BTreeMap<String, String>> {
+        let source_scope = source_scope(&source.id);
+        let legacy_scope = plugin_scope(&source.plugin_id);
+        let mut snapshot = BTreeMap::new();
+        for secret_key in secret_fields {
+            match self.get_source_secret_with_legacy_fallback(
+                &source_scope,
+                &legacy_scope,
+                secret_key,
+                false,
+            ) {
                 Ok(value) => {
                     snapshot.insert(secret_key.clone(), value.to_string());
                 }
@@ -124,5 +151,34 @@ impl<'a> SourceService<'a> {
             }
         }
         Ok(())
+    }
+
+    fn get_source_secret_with_legacy_migration(
+        &self,
+        scope: &str,
+        legacy_scope: &str,
+        key: &str,
+    ) -> Result<String, SecretError> {
+        self.get_source_secret_with_legacy_fallback(scope, legacy_scope, key, true)
+    }
+
+    fn get_source_secret_with_legacy_fallback(
+        &self,
+        scope: &str,
+        legacy_scope: &str,
+        key: &str,
+        migrate: bool,
+    ) -> Result<String, SecretError> {
+        match self.secret_store.get(scope, key) {
+            Ok(value) => Ok(value.to_string()),
+            Err(SecretError::SecretMissing(_)) => {
+                let legacy_value = self.secret_store.get(legacy_scope, key)?;
+                if migrate {
+                    self.secret_store.set(scope, key, legacy_value.as_str())?;
+                }
+                Ok(legacy_value.to_string())
+            }
+            Err(error) => Err(error),
+        }
     }
 }

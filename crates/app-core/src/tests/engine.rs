@@ -329,6 +329,128 @@ async fn engine_refresh_source_executes_script_pipeline_and_persists_state() {
 }
 
 #[tokio::test]
+async fn engine_script_secret_api_uses_current_source_scope() {
+    let db = Database::open_in_memory().expect("内存数据库初始化失败");
+    let temp_root = create_temp_dir("engine-script-secret-source-scope");
+    let plugins_dir = temp_root.join("plugins");
+    let plugin_dir = temp_root.join("script-secret-plugin");
+    let scripts_dir = plugin_dir.join("scripts");
+    fs::create_dir_all(&scripts_dir).expect("创建脚本插件目录失败");
+    fs::write(
+        plugin_dir.join("plugin.json"),
+        r#"{
+            "plugin_id": "vendor.example.script-secret",
+            "spec_version": "1.0",
+            "name": "Script Secret Source Scope",
+            "version": "1.0.0",
+            "type": "script",
+            "config_schema": "schema.json",
+            "secret_fields": ["password"],
+            "entrypoints": {
+                "fetch": "scripts/fetch.lua"
+            },
+            "capabilities": ["secret"],
+            "network_profile": "standard"
+        }"#,
+    )
+    .expect("写入 plugin.json 失败");
+    fs::write(
+        plugin_dir.join("schema.json"),
+        r#"{
+            "type": "object",
+            "required": ["seed", "password"],
+            "properties": {
+                "seed": { "type": "string", "minLength": 1 },
+                "password": { "type": "string", "minLength": 1, "format": "password" }
+            },
+            "additionalProperties": false
+        }"#,
+    )
+    .expect("写入 schema.json 失败");
+    fs::write(
+        scripts_dir.join("fetch.lua"),
+        r#"
+            function fetch(ctx, config, state)
+                local password = secret.get("password")
+                secret.set("last_seen", ctx.source_id .. ":" .. password)
+                return {
+                    ok = true,
+                    subscription = {
+                        content = "ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@example.com:443#" .. password
+                    }
+                }
+            end
+        "#,
+    )
+    .expect("写入 fetch.lua 失败");
+
+    let install_service = PluginInstallService::new(&db, &plugins_dir);
+    install_service
+        .install_from_dir(&plugin_dir)
+        .expect("安装脚本插件应成功");
+
+    let secret_store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let source_service = SourceService::new(&db, &plugins_dir, secret_store.as_ref());
+    let mut config_a = BTreeMap::new();
+    config_a.insert("seed".to_string(), json!("alpha"));
+    config_a.insert("password".to_string(), json!("a-secret"));
+    let source_a = source_service
+        .create_source("vendor.example.script-secret", "Script Source A", config_a)
+        .expect("创建脚本来源 A 应成功");
+    let mut config_b = BTreeMap::new();
+    config_b.insert("seed".to_string(), json!("beta"));
+    config_b.insert("password".to_string(), json!("b-secret"));
+    let source_b = source_service
+        .create_source("vendor.example.script-secret", "Script Source B", config_b)
+        .expect("创建脚本来源 B 应成功");
+
+    let engine = Engine::new(&db, &plugins_dir, Arc::clone(&secret_store));
+    engine
+        .refresh_source(&source_a.source.id, "manual")
+        .await
+        .expect("刷新来源 A 应成功");
+    engine
+        .refresh_source(&source_b.source.id, "manual")
+        .await
+        .expect("刷新来源 B 应成功");
+
+    let cache_repository = NodeCacheRepository::new(&db);
+    let cache_a = cache_repository
+        .get_by_source(&source_a.source.id)
+        .expect("读取来源 A node_cache 失败")
+        .expect("来源 A 应写入 node_cache");
+    let cache_b = cache_repository
+        .get_by_source(&source_b.source.id)
+        .expect("读取来源 B node_cache 失败")
+        .expect("来源 B 应写入 node_cache");
+    assert_eq!(cache_a.nodes[0].name, "a-secret");
+    assert_eq!(cache_b.nodes[0].name, "b-secret");
+
+    let source_a_last_seen = secret_store
+        .get(&format!("source:{}", source_a.source.id), "last_seen")
+        .expect("来源 A last_seen 应写入自身 source scope");
+    assert_eq!(
+        source_a_last_seen.as_str(),
+        format!("{}:a-secret", source_a.source.id)
+    );
+    let source_b_last_seen = secret_store
+        .get(&format!("source:{}", source_b.source.id), "last_seen")
+        .expect("来源 B last_seen 应写入自身 source scope");
+    assert_eq!(
+        source_b_last_seen.as_str(),
+        format!("{}:b-secret", source_b.source.id)
+    );
+    assert!(
+        secret_store
+            .get("plugin:vendor.example.script-secret", "last_seen")
+            .is_err(),
+        "Lua secret.set 不应写入 plugin scope"
+    );
+
+    cleanup_dir(&temp_root);
+}
+
+#[tokio::test]
 async fn engine_refresh_source_denies_unlisted_manifest_capability_api() {
     let db = Database::open_in_memory().expect("内存数据库初始化失败");
     let temp_root = create_temp_dir("engine-script-capability-deny");

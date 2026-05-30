@@ -5,8 +5,11 @@ pub(crate) fn validate_scope(scope: &str) -> SecretResult<()> {
         return Ok(());
     }
 
-    if let Some(plugin_id) = scope.strip_prefix("plugin:") {
-        if !plugin_id.is_empty() && plugin_id.chars().all(is_allowed_scope_char) {
+    if let Some(item_id) = scope
+        .strip_prefix("plugin:")
+        .or_else(|| scope.strip_prefix("source:"))
+    {
+        if !item_id.is_empty() && item_id.chars().all(is_allowed_scope_char) {
             return Ok(());
         }
     }

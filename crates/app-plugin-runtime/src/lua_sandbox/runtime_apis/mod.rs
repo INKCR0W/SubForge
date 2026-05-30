@@ -60,6 +60,7 @@ pub(super) fn register_runtime_apis(
     config: &LuaSandboxConfig,
     cookie_store: CookieStore,
     secret_scope: String,
+    legacy_secret_scope: Option<String>,
     request_counter: Arc<AtomicUsize>,
     log_sink: Option<Arc<dyn RuntimeLogSink>>,
 ) -> PluginRuntimeResult<()> {
@@ -89,7 +90,12 @@ pub(super) fn register_runtime_apis(
         cookie_api::register_cookie_api(lua, Arc::clone(&cookie_store))?;
     }
     if has_capability("secret") {
-        secret_api::register_secret_api(lua, Arc::clone(&config.secret_store), secret_scope)?;
+        secret_api::register_secret_api(
+            lua,
+            Arc::clone(&config.secret_store),
+            secret_scope,
+            legacy_secret_scope,
+        )?;
     }
     if has_capability("http") {
         http_api::register_http_api(lua, &config.network_profile, cookie_store, request_counter)?;

@@ -33,6 +33,10 @@ pub(crate) fn plugin_scope(plugin_id: &str) -> String {
     format!("plugin:{plugin_id}")
 }
 
+pub(crate) fn source_scope(source_id: &str) -> String {
+    format!("source:{source_id}")
+}
+
 pub(crate) fn is_scalar_json(value: &Value) -> bool {
     matches!(value, Value::String(_) | Value::Number(_) | Value::Bool(_))
 }
