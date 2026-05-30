@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant};
@@ -20,7 +21,7 @@ mod runtime_apis;
 mod tests;
 
 use error_map::map_lua_error;
-use runtime_apis::{new_cookie_store, register_runtime_apis};
+use runtime_apis::{RuntimeApiState, new_cookie_store, register_runtime_apis};
 
 pub use runtime_apis::{
     ensure_http_target_allowed_for_plugin, http_target_redirect_policy_for_plugin,
@@ -193,6 +194,7 @@ pub struct LuaSandbox {
     lua: Lua,
     config: LuaSandboxConfig,
     http_request_counter: Arc<AtomicUsize>,
+    execution_deadline: ExecutionDeadline,
 }
 
 impl LuaSandbox {
@@ -241,21 +243,23 @@ impl LuaSandbox {
             .map_err(map_lua_error)?;
         let cookie_store = new_cookie_store();
         let http_request_counter = Arc::new(AtomicUsize::new(0));
+        let execution_deadline = ExecutionDeadline::new();
         disable_globals(&lua)?;
-        register_runtime_apis(
-            &lua,
-            &config,
-            Arc::clone(&cookie_store),
+        let api_state = RuntimeApiState {
+            cookie_store: Arc::clone(&cookie_store),
             secret_scope,
             legacy_secret_scope,
-            Arc::clone(&http_request_counter),
-            config.log_sink.clone(),
-        )?;
+            request_counter: Arc::clone(&http_request_counter),
+            execution_deadline: execution_deadline.clone(),
+            log_sink: config.log_sink.clone(),
+        };
+        register_runtime_apis(&lua, &config, api_state)?;
 
         Ok(Self {
             lua,
             config,
             http_request_counter,
+            execution_deadline,
         })
     }
 
@@ -268,7 +272,14 @@ impl LuaSandbox {
         let script_path = path.as_ref();
         let script_content = fs::read_to_string(script_path)?;
         self.http_request_counter.store(0, AtomicOrdering::Relaxed);
-        self.install_limits_hook()?;
+        let deadline = Instant::now()
+            .checked_add(self.config.timeout)
+            .unwrap_or_else(Instant::now);
+        self.execution_deadline.set(deadline);
+        if let Err(error) = self.install_limits_hook(deadline) {
+            self.execution_deadline.clear();
+            return Err(error);
+        }
 
         let execution_result = (|| -> PluginRuntimeResult<Value> {
             let chunk_name = script_path.display().to_string();
@@ -286,12 +297,11 @@ impl LuaSandbox {
         })();
 
         self.lua.remove_hook();
+        self.execution_deadline.clear();
         execution_result
     }
 
-    fn install_limits_hook(&self) -> PluginRuntimeResult<()> {
-        let started = Instant::now();
-        let timeout = self.config.timeout;
+    fn install_limits_hook(&self, deadline: Instant) -> PluginRuntimeResult<()> {
         let max_instructions = self.config.max_instructions;
         let instruction_step = self.config.instruction_hook_step as u64;
         let executed_instructions = Arc::new(AtomicU64::new(0));
@@ -301,7 +311,7 @@ impl LuaSandbox {
             .set_hook(
                 HookTriggers::new().every_nth_instruction(self.config.instruction_hook_step),
                 move |_lua, _debug| {
-                    if started.elapsed() >= timeout {
+                    if Instant::now() >= deadline {
                         return Err(LuaError::runtime(HOOK_TIMEOUT_SENTINEL));
                     }
 
@@ -316,6 +326,33 @@ impl LuaSandbox {
                 },
             )
             .map_err(map_lua_error)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ExecutionDeadline {
+    inner: Arc<Mutex<Option<Instant>>>,
+}
+
+impl ExecutionDeadline {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn set(&self, deadline: Instant) {
+        *self.inner.lock().expect("execution deadline lock poisoned") = Some(deadline);
+    }
+
+    fn clear(&self) {
+        *self.inner.lock().expect("execution deadline lock poisoned") = None;
+    }
+
+    fn remaining(&self) -> Option<Duration> {
+        let guard = self.inner.lock().expect("execution deadline lock poisoned");
+        let deadline = (*guard)?;
+        Some(deadline.saturating_duration_since(Instant::now()))
     }
 }
 

@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use super::error_map::{map_lua_error, map_secret_error};
 use super::{
-    HTTP_REQUEST_LIMIT_SENTINEL, HTTP_RESPONSE_LIMIT_SENTINEL, LOG_PREFIX, LuaSandboxConfig,
-    RuntimeLogSink, SCRIPT_HTTP_MAX_REDIRECTS, SCRIPT_HTTP_MAX_REQUESTS,
+    ExecutionDeadline, HTTP_REQUEST_LIMIT_SENTINEL, HTTP_RESPONSE_LIMIT_SENTINEL, LOG_PREFIX,
+    LuaSandboxConfig, RuntimeLogSink, SCRIPT_HTTP_MAX_REDIRECTS, SCRIPT_HTTP_MAX_REQUESTS,
     SCRIPT_HTTP_MAX_RESPONSE_BYTES, SCRIPT_HTTP_TIMEOUT_MS,
 };
 use crate::PluginRuntimeResult;
@@ -55,14 +55,19 @@ pub(super) fn new_cookie_store() -> CookieStore {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
+pub(super) struct RuntimeApiState {
+    pub(super) cookie_store: CookieStore,
+    pub(super) secret_scope: String,
+    pub(super) legacy_secret_scope: Option<String>,
+    pub(super) request_counter: Arc<AtomicUsize>,
+    pub(super) execution_deadline: ExecutionDeadline,
+    pub(super) log_sink: Option<Arc<dyn RuntimeLogSink>>,
+}
+
 pub(super) fn register_runtime_apis(
     lua: &Lua,
     config: &LuaSandboxConfig,
-    cookie_store: CookieStore,
-    secret_scope: String,
-    legacy_secret_scope: Option<String>,
-    request_counter: Arc<AtomicUsize>,
-    log_sink: Option<Arc<dyn RuntimeLogSink>>,
+    state: RuntimeApiState,
 ) -> PluginRuntimeResult<()> {
     let has_capability = |capability: &str| {
         config
@@ -81,24 +86,30 @@ pub(super) fn register_runtime_apis(
         time_api::register_time_api(lua)?;
     }
     if has_capability("log") {
-        log_api::register_log_api(lua, log_sink)?;
+        log_api::register_log_api(lua, state.log_sink)?;
     }
     if has_capability("html") {
         html_api::register_html_api(lua)?;
     }
     if has_capability("cookie") {
-        cookie_api::register_cookie_api(lua, Arc::clone(&cookie_store))?;
+        cookie_api::register_cookie_api(lua, Arc::clone(&state.cookie_store))?;
     }
     if has_capability("secret") {
         secret_api::register_secret_api(
             lua,
             Arc::clone(&config.secret_store),
-            secret_scope,
-            legacy_secret_scope,
+            state.secret_scope,
+            state.legacy_secret_scope,
         )?;
     }
     if has_capability("http") {
-        http_api::register_http_api(lua, &config.network_profile, cookie_store, request_counter)?;
+        http_api::register_http_api(
+            lua,
+            &config.network_profile,
+            state.cookie_store,
+            state.request_counter,
+            state.execution_deadline,
+        )?;
     }
     Ok(())
 }
