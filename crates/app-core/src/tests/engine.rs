@@ -174,6 +174,191 @@ async fn engine_refresh_source_records_refresh_job_success() {
 }
 
 #[tokio::test]
+async fn engine_refresh_source_rejects_concurrent_refresh_for_same_source() {
+    let db = Arc::new(Database::open_in_memory().expect("内存数据库初始化失败"));
+    let temp_root = create_temp_dir("engine-refresh-concurrent");
+    let plugins_dir = temp_root.join("plugins");
+    let install_service = PluginInstallService::new(db.as_ref(), &plugins_dir);
+    install_service
+        .install_from_dir(builtins_static_plugin_dir())
+        .expect("安装内置插件应成功");
+
+    let first_request_started = Arc::new(Notify::new());
+    let release_first_request = Arc::new(Notify::new());
+    let app = Router::new().route(
+        "/sub",
+        get({
+            let first_request_started = Arc::clone(&first_request_started);
+            let release_first_request = Arc::clone(&release_first_request);
+            move || {
+                let first_request_started = Arc::clone(&first_request_started);
+                let release_first_request = Arc::clone(&release_first_request);
+                async move {
+                    first_request_started.notify_one();
+                    release_first_request.notified().await;
+                    (
+                        [(
+                            axum::http::header::CONTENT_TYPE,
+                            "text/plain; charset=utf-8",
+                        )],
+                        BASE64_SUBSCRIPTION_FIXTURE.trim().to_string(),
+                    )
+                }
+            }
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("启动测试 HTTP 服务失败");
+    let address = listener.local_addr().expect("读取监听地址失败");
+    let base_url = format!("http://{address}");
+    let server_task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("测试 HTTP 服务运行失败");
+    });
+
+    let secret_store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let source_service = SourceService::new(db.as_ref(), &plugins_dir, secret_store.as_ref());
+    let mut config = BTreeMap::new();
+    config.insert("url".to_string(), json!(format!("{base_url}/sub")));
+    let source = source_service
+        .create_source("subforge.builtin.static", "Concurrent Source", config)
+        .expect("创建来源应成功");
+
+    let first_db = Arc::clone(&db);
+    let first_plugins_dir = plugins_dir.clone();
+    let first_secret_store = Arc::clone(&secret_store);
+    let first_source_id = source.source.id.clone();
+    let first_task = tokio::spawn(async move {
+        let engine = Engine::new(first_db.as_ref(), &first_plugins_dir, first_secret_store);
+        engine.refresh_source(&first_source_id, "manual").await
+    });
+    tokio::time::timeout(Duration::from_secs(5), first_request_started.notified())
+        .await
+        .expect("首个刷新请求未进入上游慢请求");
+
+    let second_engine = Engine::new(db.as_ref(), &plugins_dir, Arc::clone(&secret_store));
+    let second_error = second_engine
+        .refresh_source(&source.source.id, "manual")
+        .await
+        .expect_err("同 source 并发刷新应被拒绝");
+    assert!(matches!(second_error, CoreError::RefreshAlreadyRunning(_)));
+    assert_eq!(second_error.code(), "E_REFRESH_ALREADY_RUNNING");
+
+    release_first_request.notify_one();
+    let first_result = first_task
+        .await
+        .expect("首个刷新任务 join 失败")
+        .expect("首个刷新应成功");
+    assert_eq!(first_result.node_count, 3);
+
+    let refresh_repository = RefreshJobRepository::new(db.as_ref());
+    let jobs = refresh_repository
+        .list_by_source(&source.source.id)
+        .expect("读取 refresh_jobs 失败");
+    assert_eq!(jobs.len(), 1, "被拒绝的并发请求不应创建 refresh_job");
+    assert_eq!(jobs[0].id, first_result.refresh_job_id);
+    assert_eq!(jobs[0].status, "success");
+
+    server_task.abort();
+    cleanup_dir(&temp_root);
+}
+
+#[tokio::test]
+async fn engine_refresh_source_does_not_cache_after_source_was_deleted() {
+    let db = Arc::new(Database::open_in_memory().expect("内存数据库初始化失败"));
+    let temp_root = create_temp_dir("engine-refresh-delete-source");
+    let plugins_dir = temp_root.join("plugins");
+    let install_service = PluginInstallService::new(db.as_ref(), &plugins_dir);
+    install_service
+        .install_from_dir(builtins_static_plugin_dir())
+        .expect("安装内置插件应成功");
+
+    let request_started = Arc::new(Notify::new());
+    let release_request = Arc::new(Notify::new());
+    let app = Router::new().route(
+        "/sub",
+        get({
+            let request_started = Arc::clone(&request_started);
+            let release_request = Arc::clone(&release_request);
+            move || {
+                let request_started = Arc::clone(&request_started);
+                let release_request = Arc::clone(&release_request);
+                async move {
+                    request_started.notify_one();
+                    release_request.notified().await;
+                    (
+                        [(
+                            axum::http::header::CONTENT_TYPE,
+                            "text/plain; charset=utf-8",
+                        )],
+                        BASE64_SUBSCRIPTION_FIXTURE.trim().to_string(),
+                    )
+                }
+            }
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("启动测试 HTTP 服务失败");
+    let address = listener.local_addr().expect("读取监听地址失败");
+    let base_url = format!("http://{address}");
+    let server_task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("测试 HTTP 服务运行失败");
+    });
+
+    let secret_store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let source_service = SourceService::new(db.as_ref(), &plugins_dir, secret_store.as_ref());
+    let mut config = BTreeMap::new();
+    config.insert("url".to_string(), json!(format!("{base_url}/sub")));
+    let source = source_service
+        .create_source("subforge.builtin.static", "Deleted During Refresh", config)
+        .expect("创建来源应成功");
+
+    let refresh_db = Arc::clone(&db);
+    let refresh_plugins_dir = plugins_dir.clone();
+    let refresh_secret_store = Arc::clone(&secret_store);
+    let refresh_source_id = source.source.id.clone();
+    let refresh_task = tokio::spawn(async move {
+        let engine = Engine::new(
+            refresh_db.as_ref(),
+            &refresh_plugins_dir,
+            refresh_secret_store,
+        );
+        engine.refresh_source(&refresh_source_id, "manual").await
+    });
+    tokio::time::timeout(Duration::from_secs(5), request_started.notified())
+        .await
+        .expect("刷新请求未进入上游慢请求");
+
+    SourceService::new(db.as_ref(), &plugins_dir, secret_store.as_ref())
+        .delete_source(&source.source.id)
+        .expect("刷新过程中删除来源应成功");
+    release_request.notify_one();
+
+    let refresh_error = refresh_task
+        .await
+        .expect("刷新任务 join 失败")
+        .expect_err("来源已删除时刷新提交应失败");
+    assert!(matches!(refresh_error, CoreError::SourceNotFound(_)));
+
+    let cache_repository = NodeCacheRepository::new(db.as_ref());
+    assert!(
+        cache_repository
+            .get_by_source(&source.source.id)
+            .expect("查询 node_cache 失败")
+            .is_none(),
+        "来源删除后旧刷新不得重新写入孤儿 node_cache"
+    );
+
+    server_task.abort();
+    cleanup_dir(&temp_root);
+}
+
+#[tokio::test]
 async fn engine_refresh_source_executes_script_pipeline_and_persists_state() {
     let db = Database::open_in_memory().expect("内存数据库初始化失败");
     let temp_root = create_temp_dir("engine-script-pipeline");

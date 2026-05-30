@@ -1915,6 +1915,174 @@ async fn e2e_refresh_source_with_browser_firefox_network_profile_succeeds() {
 }
 
 #[tokio::test]
+async fn e2e_concurrent_refresh_for_same_source_returns_conflict() {
+    let state = build_test_state();
+    let app = build_router(state.clone());
+
+    let first_request_started = Arc::new(Notify::new());
+    let release_first_request = Arc::new(Notify::new());
+    let upstream_app = Router::new().route(
+        "/sub",
+        get({
+            let first_request_started = Arc::clone(&first_request_started);
+            let release_first_request = Arc::clone(&release_first_request);
+            move || {
+                let first_request_started = Arc::clone(&first_request_started);
+                let release_first_request = Arc::clone(&release_first_request);
+                async move {
+                    first_request_started.notify_one();
+                    release_first_request.notified().await;
+                    (
+                        [(CONTENT_TYPE, "text/plain; charset=utf-8")],
+                        BASE64_SUBSCRIPTION_FIXTURE.trim().to_string(),
+                    )
+                }
+            }
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("启动测试上游服务器失败");
+    let address = listener.local_addr().expect("读取测试监听地址失败");
+    let upstream_base = format!("http://{address}");
+    let server_task = tokio::spawn(async move {
+        axum::serve(listener, upstream_app)
+            .await
+            .expect("测试上游服务器运行失败");
+    });
+
+    let plugin_zip = build_builtin_plugin_zip_bytes();
+    let boundary = "----subforge-e2e-concurrent-refresh";
+    let import_body = build_multipart_plugin_body(boundary, &plugin_zip, "builtin-static.zip");
+    let import_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/plugins/import")
+                .header(HOST, "127.0.0.1:18118")
+                .header("authorization", "Bearer test-admin-token")
+                .header(
+                    CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(import_body))
+                .expect("构建导入插件请求失败"),
+        )
+        .await
+        .expect("导入插件请求执行失败");
+    assert_eq!(import_response.status(), StatusCode::CREATED);
+
+    let source_response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::POST,
+            "/api/sources",
+            &json!({
+                "plugin_id": "test.plugin.import-stub",
+                "name": "Concurrent Refresh Source",
+                "config": {
+                    "url": format!("{upstream_base}/sub")
+                }
+            }),
+        ))
+        .await
+        .expect("创建来源请求执行失败");
+    assert_eq!(source_response.status(), StatusCode::CREATED);
+    let source_payload = read_json(source_response).await;
+    let source_id = source_payload
+        .pointer("/source/source/id")
+        .and_then(Value::as_str)
+        .expect("来源响应缺少 source.id")
+        .to_string();
+    let profile_response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::POST,
+            "/api/profiles",
+            &json!({
+                "name": "Concurrent Refresh Profile",
+                "source_ids": [source_id.clone()]
+            }),
+        ))
+        .await
+        .expect("创建 Profile 请求执行失败");
+    assert_eq!(profile_response.status(), StatusCode::CREATED);
+    let profile_payload = read_json(profile_response).await;
+    let profile_id = profile_payload
+        .pointer("/profile/profile/id")
+        .and_then(Value::as_str)
+        .expect("Profile 响应缺少 id")
+        .to_string();
+
+    let first_app = app.clone();
+    let first_source_id = source_id.clone();
+    let first_refresh_task = tokio::spawn(async move {
+        first_app
+            .oneshot(admin_request(
+                Method::POST,
+                &format!("/api/sources/{first_source_id}/refresh"),
+                Body::empty(),
+            ))
+            .await
+            .expect("首个刷新请求执行失败")
+    });
+    tokio::time::timeout(Duration::from_secs(5), first_request_started.notified())
+        .await
+        .expect("首个刷新请求未进入上游慢请求");
+
+    let conflict_response = app
+        .clone()
+        .oneshot(admin_request(
+            Method::POST,
+            &format!("/api/sources/{source_id}/refresh"),
+            Body::empty(),
+        ))
+        .await
+        .expect("并发刷新请求执行失败");
+    assert_eq!(conflict_response.status(), StatusCode::CONFLICT);
+    let conflict_payload = read_json(conflict_response).await;
+    assert_eq!(
+        conflict_payload.get("code").and_then(Value::as_str),
+        Some("E_REFRESH_ALREADY_RUNNING")
+    );
+
+    let profile_conflict_response = app
+        .clone()
+        .oneshot(admin_request(
+            Method::POST,
+            &format!("/api/profiles/{profile_id}/refresh"),
+            Body::empty(),
+        ))
+        .await
+        .expect("profile 并发刷新请求执行失败");
+    assert_eq!(profile_conflict_response.status(), StatusCode::CONFLICT);
+    let profile_conflict_payload = read_json(profile_conflict_response).await;
+    assert_eq!(
+        profile_conflict_payload.get("code").and_then(Value::as_str),
+        Some("E_REFRESH_ALREADY_RUNNING")
+    );
+
+    release_first_request.notify_one();
+    let first_response = first_refresh_task.await.expect("首个刷新任务 join 失败");
+    assert_eq!(first_response.status(), StatusCode::OK);
+    let first_payload = read_json(first_response).await;
+    assert_eq!(
+        first_payload.get("node_count").and_then(Value::as_u64),
+        Some(3)
+    );
+
+    let refresh_repository = RefreshJobRepository::new(state.database.as_ref());
+    let refresh_jobs = refresh_repository
+        .list_by_source(&source_id)
+        .expect("读取 refresh_jobs 失败");
+    assert_eq!(refresh_jobs.len(), 1, "409 请求不应创建 refresh_job");
+    assert_eq!(refresh_jobs[0].status, "success");
+
+    server_task.abort();
+}
+
+#[tokio::test]
 async fn e2e_script_source_refresh_via_management_api() {
     let state = build_test_state();
     let mut event_receiver = state.event_sender.subscribe();

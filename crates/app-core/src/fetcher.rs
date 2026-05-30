@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use app_common::ProxyNode;
-use app_storage::{Database, NodeCacheRepository};
+use app_storage::{Database, NodeCacheRepository, SourceRepository};
 use app_transport::{NetworkProfileFactory, TransportProfile};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT};
 use reqwest::redirect::Policy;
@@ -291,9 +291,18 @@ where
     }
 
     fn cache_nodes(&self, source_instance_id: &str, nodes: &[ProxyNode]) -> CoreResult<()> {
+        self.ensure_source_exists(source_instance_id)?;
         let now = now_rfc3339()?;
         let cache_repository = NodeCacheRepository::new(self.db);
         cache_repository.upsert_nodes(source_instance_id, nodes, &now, None)?;
+        Ok(())
+    }
+
+    fn ensure_source_exists(&self, source_instance_id: &str) -> CoreResult<()> {
+        let source_repository = SourceRepository::new(self.db);
+        if source_repository.get_by_id(source_instance_id)?.is_none() {
+            return Err(CoreError::SourceNotFound(source_instance_id.to_string()));
+        }
         Ok(())
     }
 

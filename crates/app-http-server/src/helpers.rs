@@ -299,6 +299,9 @@ pub(crate) fn core_error_to_response(error: CoreError) -> (StatusCode, Json<Erro
         CoreError::PluginNotFound(message) | CoreError::SourceNotFound(message) => {
             error_response(StatusCode::NOT_FOUND, &code, message, false)
         }
+        CoreError::RefreshAlreadyRunning(message) => {
+            error_response(StatusCode::CONFLICT, &code, message, true)
+        }
         CoreError::SubscriptionFetch(message) => {
             error_response(StatusCode::BAD_GATEWAY, &code, message, true)
         }

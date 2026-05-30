@@ -27,6 +27,8 @@ pub enum CoreError {
     PluginNotFound(String),
     #[error("来源不存在：{0}")]
     SourceNotFound(String),
+    #[error("来源正在刷新中：{0}")]
+    RefreshAlreadyRunning(String),
     #[error("订阅拉取失败：{0}")]
     SubscriptionFetch(String),
     #[error("订阅解析失败：{0}")]
@@ -41,6 +43,7 @@ impl CoreError {
             Self::PluginRuntime(error) => error.code(),
             Self::ConfigInvalid(_) => "E_CONFIG_INVALID",
             Self::PluginNotFound(_) | Self::SourceNotFound(_) => "E_NOT_FOUND",
+            Self::RefreshAlreadyRunning(_) => "E_REFRESH_ALREADY_RUNNING",
             Self::PluginAlreadyInstalled(_) => "E_PLUGIN_INVALID",
             Self::SubscriptionParse(_) => "E_PARSE",
             Self::Storage(_)

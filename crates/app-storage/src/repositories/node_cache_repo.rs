@@ -29,7 +29,10 @@ impl<'a> NodeCacheRepository<'a> {
                  ON CONFLICT(id)
                  DO UPDATE SET data_json = excluded.data_json,
                                fetched_at = excluded.fetched_at,
-                               expires_at = excluded.expires_at",
+                               expires_at = excluded.expires_at
+                 WHERE EXISTS (
+                     SELECT 1 FROM source_instances WHERE id = excluded.source_instance_id
+                 )",
                 params![
                     cache_id,
                     source_instance_id,

@@ -192,10 +192,11 @@ pub(crate) async fn refresh_profile_handler(
     let source_ids =
         list_profile_source_ids(state.database.as_ref(), &id).map_err(storage_error_to_response)?;
 
-    let engine = Engine::new(
+    let engine = Engine::with_refresh_registry(
         state.database.as_ref(),
         &state.plugins_dir,
         Arc::clone(&state.secret_store),
+        state.refresh_registry.clone(),
     );
     state.profile_cache.invalidate(&id);
     let mut node_count = 0usize;

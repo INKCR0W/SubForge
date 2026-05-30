@@ -11,13 +11,14 @@ use time::format_description::well_known::Rfc3339;
 
 use crate::script_executor::ScriptExecutor;
 use crate::utils::{generate_secure_token, now_rfc3339};
-use crate::{CoreError, CoreResult, SourceService, StaticFetcher};
+use crate::{CoreError, CoreResult, RefreshRegistry, SourceService, StaticFetcher};
 
 #[derive(Debug)]
 pub struct Engine<'a> {
     db: &'a Database,
     secret_store: Arc<dyn SecretStore>,
     plugins_dir: PathBuf,
+    refresh_registry: RefreshRegistry,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +45,21 @@ impl<'a> Engine<'a> {
             db,
             secret_store,
             plugins_dir: plugins_dir.into(),
+            refresh_registry: RefreshRegistry::global(),
+        }
+    }
+
+    pub fn with_refresh_registry(
+        db: &'a Database,
+        plugins_dir: impl Into<PathBuf>,
+        secret_store: Arc<dyn SecretStore>,
+        refresh_registry: RefreshRegistry,
+    ) -> Self {
+        Self {
+            db,
+            secret_store,
+            plugins_dir: plugins_dir.into(),
+            refresh_registry,
         }
     }
 
@@ -52,6 +68,7 @@ impl<'a> Engine<'a> {
         source_id: &str,
         trigger_type: &str,
     ) -> CoreResult<SourceRefreshResult> {
+        let _refresh_guard = self.refresh_registry.try_acquire(source_id)?;
         let source_service =
             SourceService::new(self.db, &self.plugins_dir, self.secret_store.as_ref());
         let source = source_service

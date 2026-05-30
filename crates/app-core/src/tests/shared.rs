@@ -21,6 +21,7 @@ pub(super) use reqwest::header::{
 };
 pub(super) use serde_json::{Value, json};
 pub(super) use tokio::net::TcpListener;
+pub(super) use tokio::sync::Notify;
 pub(super) use tokio::task::JoinHandle;
 
 pub(super) use crate::fetcher::{redact_headers_for_log, redact_url_for_log};

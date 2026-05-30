@@ -2,7 +2,7 @@ use app_common::{
     AppSetting, ClashRoutingTemplate, ProxyNode, RoutingTemplateGroupIr, RoutingTemplateIr,
     RoutingTemplateSourceKernel,
 };
-use app_storage::{Database, SettingsRepository};
+use app_storage::{Database, SettingsRepository, SourceRepository};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use serde_yaml::Value as YamlValue;
 
@@ -32,6 +32,11 @@ pub(super) fn update_clash_routing_template(
     source_instance_id: &str,
     template: Option<&ClashRoutingTemplate>,
 ) -> CoreResult<()> {
+    let source_repository = SourceRepository::new(db);
+    if source_repository.get_by_id(source_instance_id)?.is_none() {
+        return Err(CoreError::SourceNotFound(source_instance_id.to_string()));
+    }
+
     let repository = SettingsRepository::new(db);
     let key = format!("source.{source_instance_id}.clash_routing_template");
     let now = now_rfc3339()?;

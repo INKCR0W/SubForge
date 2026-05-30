@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use app_common::{ErrorResponse, Profile, ProxyNode};
+use app_core::RefreshRegistry;
 use app_secrets::SecretStore;
 use app_storage::Database;
 use app_transform::RoutingTemplateExportContext;
@@ -46,6 +47,7 @@ pub struct ServerContext {
     pub(crate) auth_failures: Arc<AuthFailures>,
     pub(crate) profile_cache: Arc<ProfileCache>,
     pub(crate) source_userinfo_cache: Arc<SourceUserinfoCache>,
+    pub(crate) refresh_registry: RefreshRegistry,
 }
 
 impl ServerContext {
@@ -72,6 +74,7 @@ impl ServerContext {
             auth_failures: Arc::new(AuthFailures::default()),
             profile_cache: Arc::new(ProfileCache::default()),
             source_userinfo_cache: Arc::new(SourceUserinfoCache::default()),
+            refresh_registry: RefreshRegistry::global(),
         }
     }
 

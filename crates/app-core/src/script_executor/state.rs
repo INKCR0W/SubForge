@@ -31,7 +31,10 @@ pub(super) fn persist_state_if_changed(
     };
     source.updated_at = now_rfc3339()?;
     let repository = SourceRepository::new(db);
-    repository.update(source)?;
+    let affected = repository.update(source)?;
+    if affected == 0 {
+        return Err(CoreError::SourceNotFound(source.id.clone()));
+    }
     Ok(())
 }
 

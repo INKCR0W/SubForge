@@ -142,8 +142,14 @@ pub(crate) async fn refresh_source_handler(
     let database = Arc::clone(&state.database);
     let plugins_dir = state.plugins_dir.clone();
     let secret_store = Arc::clone(&state.secret_store);
+    let refresh_registry = state.refresh_registry.clone();
     let task_result = tokio::spawn(async move {
-        let engine = Engine::new(database.as_ref(), &plugins_dir, secret_store);
+        let engine = Engine::with_refresh_registry(
+            database.as_ref(),
+            &plugins_dir,
+            secret_store,
+            refresh_registry,
+        );
         engine.refresh_source(&source_id, "manual").await
     })
     .await;

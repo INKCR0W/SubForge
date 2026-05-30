@@ -5,6 +5,7 @@ mod error;
 mod fetcher;
 mod parser;
 mod plugin_install;
+mod refresh_registry;
 mod script_executor;
 mod source_service;
 mod utils;
@@ -14,6 +15,7 @@ pub use error::{CoreError, CoreResult};
 pub use fetcher::{FetchAndCacheResult, StaticFetcher};
 pub use parser::{SubscriptionParser, UriListParser};
 pub use plugin_install::PluginInstallService;
+pub use refresh_registry::{RefreshGuard, RefreshRegistry};
 pub use source_service::SourceService;
 
 use std::collections::BTreeMap;
