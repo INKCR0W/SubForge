@@ -1,7 +1,10 @@
+use std::net::{IpAddr, ToSocketAddrs};
+use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::Client;
 use reqwest::StatusCode;
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::redirect::Policy;
 
 use crate::error::TransportResult;
@@ -81,6 +84,25 @@ pub trait TransportProfile: Send + Sync + std::fmt::Debug {
             self.default_user_agent(),
             self.uses_cookie_store(),
             redirect_policy,
+            None,
+        )
+    }
+    fn build_client_with_guarded_dns(
+        &self,
+        timeout: Duration,
+        max_redirects: usize,
+        redirect_policy: Option<Policy>,
+        is_forbidden_ip: fn(IpAddr) -> bool,
+    ) -> TransportResult<Client> {
+        // 该路径用于插件脚本等不可信网络访问：在 reqwest connector 的 DNS
+        // 解析点过滤真实连接地址，避免预解析检查与实际连接之间发生 DNS TOCTOU。
+        build_client_with_settings(
+            timeout,
+            max_redirects,
+            self.default_user_agent(),
+            self.uses_cookie_store(),
+            redirect_policy,
+            Some(is_forbidden_ip),
         )
     }
     fn request_delay(&self) -> Duration;
@@ -330,15 +352,57 @@ fn build_client_with_settings(
     user_agent: &'static str,
     use_cookie_store: bool,
     redirect_policy: Option<Policy>,
+    is_forbidden_ip: Option<fn(IpAddr) -> bool>,
 ) -> TransportResult<Client> {
     let mut builder = Client::builder()
         .redirect(redirect_policy.unwrap_or_else(|| Policy::limited(max_redirects)))
         .timeout(timeout)
         .user_agent(user_agent)
         .danger_accept_invalid_certs(false);
+    if let Some(is_forbidden_ip) = is_forbidden_ip {
+        builder = builder.dns_resolver(Arc::new(GuardedDnsResolver::new(is_forbidden_ip)));
+    }
     if use_cookie_store {
         builder = builder.cookie_store(true);
     }
     let client = builder.build()?;
     Ok(client)
+}
+
+#[derive(Debug)]
+struct GuardedDnsResolver {
+    is_forbidden_ip: fn(IpAddr) -> bool,
+}
+
+impl GuardedDnsResolver {
+    fn new(is_forbidden_ip: fn(IpAddr) -> bool) -> Self {
+        Self { is_forbidden_ip }
+    }
+}
+
+impl Resolve for GuardedDnsResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        let host = name.as_str().to_string();
+        let is_forbidden_ip = self.is_forbidden_ip;
+        Box::pin(async move {
+            let resolved = tokio::task::spawn_blocking(move || {
+                (host.as_str(), 0)
+                    .to_socket_addrs()
+                    .map(|addresses| addresses.collect::<Vec<_>>())
+            })
+            .await
+            .map_err(|error| format!("DNS 解析任务失败：{error}"))?
+            .map_err(|error| format!("DNS 解析失败：{error}"))?;
+
+            let safe_addresses = resolved
+                .into_iter()
+                .filter(|address| !(is_forbidden_ip)(address.ip()))
+                .collect::<Vec<_>>();
+            if safe_addresses.is_empty() {
+                return Err("DNS guard 拦截：目标地址不允许（内网/保留地址）".into());
+            }
+
+            Ok(Box::new(safe_addresses.into_iter()) as Addrs)
+        })
+    }
 }

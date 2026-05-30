@@ -9,7 +9,7 @@ publish.workspace = true
 [dependencies]
 reqwest = { workspace = true, features = ["cookies"] }
 thiserror.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
-tokio.workspace = true

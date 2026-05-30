@@ -74,7 +74,12 @@ fn execute_http_request(
     let timeout = Duration::from_millis(timeout_ms);
     let redirect_policy = target_guard::redirect_policy(SCRIPT_HTTP_MAX_REDIRECTS);
     let client = transport_profile
-        .build_client_with_limits(timeout, SCRIPT_HTTP_MAX_REDIRECTS, Some(redirect_policy))
+        .build_client_with_guarded_dns(
+            timeout,
+            SCRIPT_HTTP_MAX_REDIRECTS,
+            Some(redirect_policy),
+            target_guard::is_forbidden_ip,
+        )
         .map_err(|error| LuaError::runtime(format!("http.request 客户端初始化失败：{error}")))?;
 
     let method = request

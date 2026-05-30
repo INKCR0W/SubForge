@@ -1,4 +1,4 @@
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 
 use mlua::Error as LuaError;
 use reqwest::Url;
@@ -92,25 +92,45 @@ fn resolve_host_ips(host: &str, port: u16) -> PluginRuntimeResult<Vec<IpAddr>> {
         })
 }
 
-fn is_forbidden_ip(ip: IpAddr) -> bool {
+pub(crate) fn is_forbidden_ip(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(v4) => {
-            let octets = v4.octets();
-            octets[0] == 127
-                || octets[0] == 0
-                || octets[0] == 10
-                || (octets[0] == 172 && (16..=31).contains(&octets[1]))
-                || (octets[0] == 192 && octets[1] == 168)
-                || (octets[0] == 169 && octets[1] == 254)
-        }
-        IpAddr::V6(v6) => {
-            if v6.is_loopback() {
-                return true;
-            }
-            let first_segment = v6.segments()[0];
-            (first_segment & 0xfe00) == 0xfc00 || (first_segment & 0xffc0) == 0xfe80
-        }
+        IpAddr::V4(v4) => is_forbidden_ipv4(v4),
+        IpAddr::V6(v6) => is_forbidden_ipv6(v6),
     }
+}
+
+fn is_forbidden_ipv4(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    ip.is_private()
+        || ip.is_loopback()
+        || ip.is_link_local()
+        || ip.is_unspecified()
+        || ip.is_multicast()
+        || ip.is_broadcast()
+        || ip.is_documentation()
+        || octets[0] == 0
+        || octets[0] == 100 && (64..=127).contains(&octets[1])
+        || octets[0] == 198 && (octets[1] == 18 || octets[1] == 19)
+        || octets[0] >= 240
+}
+
+fn is_forbidden_ipv6(ip: Ipv6Addr) -> bool {
+    let segments = ip.segments();
+    if ip.is_loopback()
+        || ip.is_unspecified()
+        || ip.is_multicast()
+        || (segments[0] & 0xfe00) == 0xfc00
+        || (segments[0] & 0xffc0) == 0xfe80
+        || (segments[0] == 0x2001 && segments[1] == 0x0db8)
+    {
+        return true;
+    }
+
+    if let Some(ipv4) = ip.to_ipv4() {
+        return is_forbidden_ipv4(ipv4);
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -135,6 +155,66 @@ mod tests {
         assert!(
             message.contains("重定向目标地址不允许") && message.contains("hop=1"),
             "错误信息应标识重定向 hop 被拦截"
+        );
+    }
+
+    #[test]
+    fn blocks_ipv4_mapped_ipv6_loopback() {
+        let url = Url::parse("http://[::ffff:127.0.0.1]:18118/health").expect("url 解析应成功");
+        let error = ensure_allowed_target(&url).expect_err("IPv4-mapped IPv6 loopback 应被拦截");
+        assert!(
+            error.to_string().contains("不允许"),
+            "错误信息应说明目标地址不允许"
+        );
+    }
+
+    #[test]
+    fn blocks_ipv4_mapped_ipv6_private_and_link_local() {
+        for target in [
+            "http://[::ffff:10.0.0.1]/",
+            "http://[::ffff:192.168.1.1]/",
+            "http://[::ffff:169.254.169.254]/",
+        ] {
+            let url = Url::parse(target).expect("url 解析应成功");
+            let error = ensure_allowed_target(&url).expect_err("IPv4-mapped IPv6 私网地址应被拦截");
+            assert!(
+                error.to_string().contains("不允许"),
+                "{target} 的错误信息应说明目标地址不允许"
+            );
+        }
+    }
+
+    #[test]
+    fn blocks_ipv4_compatible_ipv6_loopback() {
+        let url = Url::parse("http://[::127.0.0.1]:18118/health").expect("url 解析应成功");
+        let error =
+            ensure_allowed_target(&url).expect_err("IPv4-compatible IPv6 loopback 应被拦截");
+        assert!(
+            error.to_string().contains("不允许"),
+            "错误信息应说明目标地址不允许"
+        );
+    }
+
+    #[test]
+    fn blocks_ipv6_loopback_and_unspecified() {
+        for target in ["http://[::1]/", "http://[::]/"] {
+            let url = Url::parse(target).expect("url 解析应成功");
+            let error =
+                ensure_allowed_target(&url).expect_err("IPv6 loopback/unspecified 应被拦截");
+            assert!(
+                error.to_string().contains("不允许"),
+                "{target} 的错误信息应说明目标地址不允许"
+            );
+        }
+    }
+
+    #[test]
+    fn blocks_ipv4_this_network_range() {
+        let url = Url::parse("http://0.0.0.1/").expect("url 解析应成功");
+        let error = ensure_allowed_target(&url).expect_err("IPv4 0.0.0.0/8 应被拦截");
+        assert!(
+            error.to_string().contains("不允许"),
+            "错误信息应说明目标地址不允许"
         );
     }
 }
