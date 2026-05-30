@@ -70,6 +70,8 @@ pub(crate) struct SettingsResponse {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SystemStatusResponse {
+    pub(crate) status: &'static str,
+    pub(crate) version: &'static str,
     pub(crate) active_sources: usize,
     pub(crate) total_nodes: usize,
     pub(crate) last_refresh_at: Option<String>,

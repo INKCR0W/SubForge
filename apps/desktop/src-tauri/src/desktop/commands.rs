@@ -62,6 +62,7 @@ pub(crate) async fn core_events_start(
 ) -> Result<(), String> {
     manager
         .start_events_bridge(app_handle)
+        .await
         .map_err(|err| err.to_string())
 }
 

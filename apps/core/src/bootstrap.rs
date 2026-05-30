@@ -125,6 +125,11 @@ async fn run_server(args: RunArgs) -> Result<()> {
     let shutdown_receiver = server_context.shutdown_receiver();
     let app = build_http_router(server_context);
 
+    let socket: SocketAddr = format!("{host}:{port}")
+        .parse()
+        .with_context(|| format!("无效监听地址: {host}:{port}"))?;
+    let listener = tokio::net::TcpListener::bind(socket).await?;
+
     if args.gui_mode {
         let bootstrap = GuiBootstrap {
             version: APP_VERSION,
@@ -138,11 +143,6 @@ async fn run_server(args: RunArgs) -> Result<()> {
         writeln!(stdout, "{json}")?;
         stdout.flush()?;
     }
-
-    let socket: SocketAddr = format!("{host}:{port}")
-        .parse()
-        .with_context(|| format!("无效监听地址: {host}:{port}"))?;
-    let listener = tokio::net::TcpListener::bind(socket).await?;
 
     println!(
         "SubForge Core 已启动: http://{}:{}（secrets backend: {}）",

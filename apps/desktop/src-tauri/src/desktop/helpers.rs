@@ -73,8 +73,29 @@ pub(super) fn resolve_core_data_dir(workspace_root: Option<&Path>) -> Result<Pat
     Err(anyhow!("无法确定 Desktop Core 数据目录"))
 }
 
-pub(super) fn read_bootstrap_line(stdout: std::process::ChildStdout) -> Result<CoreBootstrapLine> {
-    let mut reader = BufReader::new(stdout);
+pub(super) fn read_bootstrap_line(
+    stdout: std::process::ChildStdout,
+    timeout: Duration,
+) -> Result<CoreBootstrapLine> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let result = read_bootstrap_line_from_reader(&mut reader);
+        if result.is_ok() {
+            spawn_log_reader(reader, "core-stdout");
+        }
+        let _ = sender.send(result);
+    });
+
+    receiver
+        .recv_timeout(timeout)
+        .map_err(|_| anyhow!("读取 Core 引导输出超时"))?
+}
+
+fn read_bootstrap_line_from_reader<R>(reader: &mut BufReader<R>) -> Result<CoreBootstrapLine>
+where
+    R: std::io::Read,
+{
     let mut first_line = String::new();
     let read_bytes = reader
         .read_line(&mut first_line)
@@ -84,11 +105,7 @@ pub(super) fn read_bootstrap_line(stdout: std::process::ChildStdout) -> Result<C
         return Err(anyhow!("Core 启动输出为空"));
     }
 
-    let bootstrap: CoreBootstrapLine =
-        serde_json::from_str(first_line.trim()).context("解析 Core 引导 JSON 失败")?;
-
-    spawn_log_reader(reader, "core-stdout");
-    Ok(bootstrap)
+    serde_json::from_str(first_line.trim()).context("解析 Core 引导 JSON 失败")
 }
 
 pub(super) fn spawn_log_reader<R>(reader: R, stream_name: &'static str)

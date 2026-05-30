@@ -61,6 +61,8 @@ pub(crate) async fn get_system_status_handler(
     Ok((
         StatusCode::OK,
         Json(SystemStatusResponse {
+            status: "ok",
+            version: crate::state::APP_VERSION,
             active_sources,
             total_nodes,
             last_refresh_at,

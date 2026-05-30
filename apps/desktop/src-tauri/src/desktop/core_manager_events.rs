@@ -6,7 +6,7 @@ use super::helpers::{abort_events_task, emit_bridge_event, parse_core_event_payl
 use super::types::CoreBridgeEvent;
 
 impl CoreManager {
-    pub(crate) fn start_events_bridge(&self, app_handle: AppHandle) -> Result<()> {
+    pub(crate) async fn start_events_bridge(&self, app_handle: AppHandle) -> Result<()> {
         let (base_url, admin_token, core_running) = {
             let mut state = self.lock_state()?;
             self.reap_child_if_exited(&mut state)?;
@@ -44,6 +44,21 @@ impl CoreManager {
         }
 
         let token = admin_token.expect("admin_token 已判空");
+        if self
+            .fetch_authenticated_status_version(&base_url, &token)
+            .await
+            .is_none()
+        {
+            emit_bridge_event(
+                &app_handle,
+                CoreBridgeEvent {
+                    kind: "disconnected".to_string(),
+                    payload: None,
+                    message: Some("Core 事件流未启动（Core 身份校验失败）".to_string()),
+                },
+            );
+            return Ok(());
+        }
         let url = format!("{base_url}/api/events");
         let client = self.client.clone();
         let task = tokio::spawn(async move {

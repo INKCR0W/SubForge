@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use serde_json::Value;
@@ -69,29 +69,19 @@ impl CoreManager {
         apply_desktop_secret_backend_args(&mut command);
         apply_windows_spawn_flags(&mut command);
 
-        let mut child = command.spawn().context("启动 subforge-core 失败")?;
-        let stdout = child
-            .stdout
-            .take()
-            .context("读取 subforge-core stdout 失败")?;
-        let stderr = child
-            .stderr
-            .take()
-            .context("读取 subforge-core stderr 失败")?;
+        let (bootstrap, child) = match launch_child_and_read_bootstrap(command) {
+            Ok(result) => result,
+            Err(error) => {
+                self.clear_started_child_state();
+                return Err(error);
+            }
+        };
+        self.store_started_child_state(bootstrap, child)?;
 
-        let bootstrap = read_bootstrap_line(stdout)?;
-        spawn_log_reader(stderr, "core-stderr");
-
-        {
-            let mut state = self.lock_state()?;
-            state.base_url = format!("http://{}:{}", bootstrap.listen_addr, bootstrap.port);
-            state.version = Some(bootstrap.version);
-            state.pid = Some(child.id());
-            state.admin_token = Some(bootstrap.admin_token);
-            state.child = Some(child);
+        if let Err(error) = self.wait_until_healthy(Duration::from_secs(5)).await {
+            self.clear_started_child_state();
+            return Err(error);
         }
-
-        self.wait_until_healthy(Duration::from_secs(5)).await?;
         self.compose_status_payload().await
     }
 
@@ -132,9 +122,20 @@ impl CoreManager {
             (state.base_url.clone(), state.pid, state.version.clone())
         };
 
-        let healthy_version = self.fetch_health_version(&base_url).await;
-        let running = healthy_version.is_some();
-        if running {
+        let current_token = self.current_admin_token()?;
+        let authenticated_version = match current_token.as_deref() {
+            Some(token) => {
+                self.fetch_authenticated_status_version(&base_url, token)
+                    .await
+            }
+            None => None,
+        };
+        let fallback_health_version = match current_token {
+            Some(_) => None,
+            None => self.fetch_health_version(&base_url).await,
+        };
+        let running = authenticated_version.is_some() || fallback_health_version.is_some();
+        if authenticated_version.is_some() {
             let mut state = self.lock_state()?;
             self.try_restore_admin_token(&mut state);
         }
@@ -142,7 +143,9 @@ impl CoreManager {
         Ok(CoreStatusPayload {
             running,
             base_url,
-            version: healthy_version.or(fallback_version),
+            version: authenticated_version
+                .or(fallback_health_version)
+                .or(fallback_version),
             pid,
         })
     }
@@ -156,23 +159,37 @@ impl CoreManager {
     }
 
     async fn wait_until_healthy(&self, timeout: Duration) -> Result<()> {
-        let deadline = std::time::Instant::now() + timeout;
+        let deadline = Instant::now() + timeout;
         loop {
-            let base_url = {
+            let (base_url, admin_token) = {
                 let state = self.lock_state()?;
-                state.base_url.clone()
+                (state.base_url.clone(), state.admin_token.clone())
             };
+            let admin_token =
+                admin_token.ok_or_else(|| anyhow!("Core 启动失败：缺少管理 token"))?;
 
-            if self.fetch_health_version(&base_url).await.is_some() {
+            if self
+                .fetch_authenticated_status_version(&base_url, &admin_token)
+                .await
+                .is_some()
+            {
                 return Ok(());
             }
 
-            if std::time::Instant::now() >= deadline {
-                return Err(anyhow!("Core 启动超时，/health 未就绪"));
+            if Instant::now() >= deadline {
+                return Err(anyhow!("Core 启动超时，认证状态接口未就绪"));
             }
 
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
+    }
+
+    pub(super) async fn fetch_authenticated_status_version(
+        &self,
+        base_url: &str,
+        admin_token: &str,
+    ) -> Option<String> {
+        fetch_authenticated_status_version_with_client(&self.client, base_url, admin_token).await
     }
 
     pub(super) async fn fetch_health_version(&self, base_url: &str) -> Option<String> {
@@ -187,6 +204,73 @@ impl CoreManager {
             .get("version")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned)
+    }
+
+    pub(super) fn current_admin_token(&self) -> Result<Option<String>> {
+        let mut state = self.lock_state()?;
+        self.reap_child_if_exited(&mut state)?;
+        self.try_restore_admin_token(&mut state);
+        Ok(state.admin_token.clone())
+    }
+
+    pub(super) async fn ensure_authenticated_core_available(
+        &self,
+        base_url: &str,
+        admin_token: Option<&str>,
+    ) -> Result<()> {
+        let token = admin_token.ok_or_else(|| {
+            anyhow!("当前会话没有管理 token，请先通过 GUI 启动 Core 再调用管理 API")
+        })?;
+        if self
+            .fetch_authenticated_status_version(base_url, token)
+            .await
+            .is_some()
+        {
+            return Ok(());
+        }
+        Err(anyhow!("Core 未运行、不可达或身份校验失败"))
+    }
+
+    pub(super) fn clear_started_child_state(&self) {
+        let mut maybe_child = {
+            let mut state = match self.lock_state() {
+                Ok(state) => state,
+                Err(_) => return,
+            };
+            abort_events_task(&mut state);
+            let child = state.child.take();
+            *state = CoreState::default();
+            child
+        };
+
+        if let Some(child) = maybe_child.as_mut() {
+            let _ = terminate_child(child);
+        }
+    }
+
+    fn store_started_child_state(
+        &self,
+        bootstrap: super::types::CoreBootstrapLine,
+        mut child: std::process::Child,
+    ) -> Result<()> {
+        let base_url = format!("http://{}:{}", bootstrap.listen_addr, bootstrap.port);
+        let version = bootstrap.version;
+        let admin_token = bootstrap.admin_token;
+        let pid = child.id();
+
+        let mut state = match self.lock_state() {
+            Ok(state) => state,
+            Err(error) => {
+                let _ = terminate_child(&mut child);
+                return Err(error);
+            }
+        };
+        state.base_url = base_url;
+        state.version = Some(version);
+        state.pid = Some(pid);
+        state.admin_token = Some(admin_token);
+        state.child = Some(child);
+        Ok(())
     }
 
     pub(super) fn lock_state(&self) -> Result<MutexGuard<'_, CoreState>> {
@@ -385,6 +469,62 @@ fn is_placeholder_sidecar(path: &std::path::Path) -> bool {
     fs::read(path)
         .map(|bytes| bytes == PLACEHOLDER_BYTES)
         .unwrap_or(false)
+}
+
+fn launch_child_and_read_bootstrap(
+    mut command: Command,
+) -> Result<(super::types::CoreBootstrapLine, std::process::Child)> {
+    let mut child = command.spawn().context("启动 subforge-core 失败")?;
+    match read_bootstrap_from_child(&mut child) {
+        Ok(bootstrap) => Ok((bootstrap, child)),
+        Err(error) => {
+            terminate_child(&mut child).ok();
+            Err(error)
+        }
+    }
+}
+
+fn read_bootstrap_from_child(
+    child: &mut std::process::Child,
+) -> Result<super::types::CoreBootstrapLine> {
+    let stdout = child
+        .stdout
+        .take()
+        .context("读取 subforge-core stdout 失败")?;
+    let stderr = child
+        .stderr
+        .take()
+        .context("读取 subforge-core stderr 失败")?;
+
+    let bootstrap = read_bootstrap_line(stdout, Duration::from_secs(10))?;
+    spawn_log_reader(stderr, "core-stderr");
+    Ok(bootstrap)
+}
+
+pub(super) async fn fetch_authenticated_status_version_with_client(
+    client: &reqwest::Client,
+    base_url: &str,
+    admin_token: &str,
+) -> Option<String> {
+    let url = format!("{base_url}/api/system/status");
+    let response = client.get(url).bearer_auth(admin_token).send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+
+    let value = response.json::<Value>().await.ok()?;
+    let status_is_ok = value
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| status.eq_ignore_ascii_case("ok"));
+    if !status_is_ok {
+        return None;
+    }
+
+    value
+        .get("version")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
 }
 
 #[cfg(windows)]

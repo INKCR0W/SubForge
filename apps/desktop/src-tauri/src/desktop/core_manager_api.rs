@@ -36,29 +36,36 @@ impl CoreManager {
             (state.base_url.clone(), state.admin_token.clone())
         };
 
-        if self.fetch_health_version(&base_url).await.is_none() {
-            return Err(anyhow!("Core 未运行或不可达"));
-        }
-
         let path = normalize_path(&request.path);
         if is_admin_token_path(&path) {
             return Err(anyhow!(
                 "安全策略限制：前端 IPC 不允许调用 /api/admin-token/*"
             ));
         }
-        if path.starts_with("/api/") && admin_token.is_none() {
+        let requires_admin_auth = path.starts_with("/api/");
+        if requires_admin_auth && admin_token.is_none() {
             return Err(anyhow!(
                 "当前会话没有管理 token，请先通过 GUI 启动 Core 再调用管理 API"
             ));
+        }
+        if requires_admin_auth {
+            self.ensure_authenticated_core_available(&base_url, admin_token.as_deref())
+                .await?;
+        } else if self.fetch_health_version(&base_url).await.is_none() {
+            return Err(anyhow!("Core 未运行或不可达"));
         }
 
         let method = Method::from_bytes(request.method.as_bytes())
             .with_context(|| format!("不支持的 HTTP 方法: {}", request.method))?;
         let url = format!("{base_url}{path}");
-        let response_redaction_token = admin_token.clone();
+        let response_redaction_token = if requires_admin_auth {
+            admin_token.clone()
+        } else {
+            None
+        };
 
         let mut builder = self.client.request(method, &url);
-        if let Some(token) = admin_token {
+        if requires_admin_auth && let Some(token) = admin_token {
             builder = builder.bearer_auth(token);
         }
         if let Some(body) = request.body {
@@ -117,13 +124,11 @@ impl CoreManager {
             (state.base_url.clone(), state.admin_token.clone())
         };
 
-        if self.fetch_health_version(&base_url).await.is_none() {
-            return Err(anyhow!("Core 未运行或不可达"));
-        }
-
         let token = admin_token.ok_or_else(|| {
             anyhow!("当前会话没有管理 token，请先通过 GUI 启动 Core 再调用管理 API")
         })?;
+        self.ensure_authenticated_core_available(&base_url, Some(token.as_str()))
+            .await?;
 
         let boundary_seed = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -266,7 +271,14 @@ fn redact_admin_token_fields(value: &mut Value) {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
 
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::net::TcpListener;
+
+    use crate::desktop::core_manager::CoreManager;
+    use crate::desktop::types::{CoreApiRequest, CoreState};
     use serde_json::json;
 
     use super::{REDACTED_VALUE, is_admin_token_path, sanitize_core_response};
@@ -342,5 +354,172 @@ mod tests {
             sanitize_core_response(headers, body, Some("desktop-admin-token"));
 
         assert_eq!(sanitized_body, format!("debug token: {REDACTED_VALUE}"));
+    }
+
+    #[tokio::test]
+    async fn proxy_rejects_fake_health_without_forwarding_bearer_to_target_api() {
+        let captured_authorizations = Arc::new(Mutex::new(Vec::<String>::new()));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("启动假 Core 服务失败");
+        let address = listener.local_addr().expect("读取假 Core 地址失败");
+        let server_captured_authorizations = Arc::clone(&captured_authorizations);
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _peer)) = listener.accept().await else {
+                    break;
+                };
+                let server_captured_authorizations = Arc::clone(&server_captured_authorizations);
+                tokio::spawn(async move {
+                    let mut buffer = vec![0_u8; 4096];
+                    let Ok(read_bytes) = stream.read(&mut buffer).await else {
+                        return;
+                    };
+                    let request = String::from_utf8_lossy(&buffer[..read_bytes]);
+                    let first_line = request.lines().next().unwrap_or_default();
+                    let path = first_line
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap_or_default()
+                        .to_string();
+                    if path == "/api/system/settings"
+                        && let Some(header_value) = request
+                            .lines()
+                            .find_map(|line| line.strip_prefix("authorization: "))
+                            .or_else(|| {
+                                request
+                                    .lines()
+                                    .find_map(|line| line.strip_prefix("Authorization: "))
+                            })
+                    {
+                        server_captured_authorizations
+                            .lock()
+                            .expect("捕获列表锁异常")
+                            .push(header_value.to_string());
+                    }
+
+                    let (status, body) = match path.as_str() {
+                        "/health" => (
+                            "200 OK",
+                            json!({ "status": "ok", "version": "fake-core" }).to_string(),
+                        ),
+                        "/api/system/status" => ("401 Unauthorized", String::new()),
+                        "/api/system/settings" => ("200 OK", json!({ "settings": {} }).to_string()),
+                        _ => ("404 Not Found", String::new()),
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+
+        let manager = CoreManager {
+            workspace_root: None,
+            core_data_dir: PathBuf::from("unused-test-data-dir"),
+            state: Mutex::new(CoreState {
+                base_url: format!("http://{address}"),
+                admin_token: Some("desktop-admin-token".to_string()),
+                ..CoreState::default()
+            }),
+            client: reqwest::Client::new(),
+        };
+
+        let result = manager
+            .proxy_api_call(CoreApiRequest {
+                method: "GET".to_string(),
+                path: "/api/system/settings".to_string(),
+                body: None,
+            })
+            .await;
+
+        assert!(
+            result.is_err(),
+            "仅伪造 /health 且无法通过认证状态检查时不应代理 API"
+        );
+        assert!(
+            captured_authorizations
+                .lock()
+                .expect("捕获列表锁异常")
+                .is_empty(),
+            "认证握手失败后，不得把 Bearer token 继续转发到目标 API"
+        );
+    }
+
+    #[tokio::test]
+    async fn health_proxy_does_not_forward_bearer_token() {
+        let captured_authorizations = Arc::new(Mutex::new(Vec::<String>::new()));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("启动假 Core 服务失败");
+        let address = listener.local_addr().expect("读取假 Core 地址失败");
+        let server_captured_authorizations = Arc::clone(&captured_authorizations);
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _peer)) = listener.accept().await else {
+                    break;
+                };
+                let server_captured_authorizations = Arc::clone(&server_captured_authorizations);
+                tokio::spawn(async move {
+                    let mut buffer = vec![0_u8; 4096];
+                    let Ok(read_bytes) = stream.read(&mut buffer).await else {
+                        return;
+                    };
+                    let request = String::from_utf8_lossy(&buffer[..read_bytes]);
+                    if let Some(header_value) = request
+                        .lines()
+                        .find_map(|line| line.strip_prefix("authorization: "))
+                        .or_else(|| {
+                            request
+                                .lines()
+                                .find_map(|line| line.strip_prefix("Authorization: "))
+                        })
+                    {
+                        server_captured_authorizations
+                            .lock()
+                            .expect("捕获列表锁异常")
+                            .push(header_value.to_string());
+                    }
+
+                    let body = json!({ "status": "ok", "version": "fake-core" }).to_string();
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+
+        let manager = CoreManager {
+            workspace_root: None,
+            core_data_dir: PathBuf::from("unused-test-data-dir"),
+            state: Mutex::new(CoreState {
+                base_url: format!("http://{address}"),
+                admin_token: Some("desktop-admin-token".to_string()),
+                ..CoreState::default()
+            }),
+            client: reqwest::Client::new(),
+        };
+
+        let response = manager
+            .proxy_api_call(CoreApiRequest {
+                method: "GET".to_string(),
+                path: "/health".to_string(),
+                body: None,
+            })
+            .await
+            .expect("/health 代理应保持可用");
+
+        assert_eq!(response.status, 200);
+        assert!(
+            captured_authorizations
+                .lock()
+                .expect("捕获列表锁异常")
+                .is_empty(),
+            "/health 不需要管理认证，不得向健康检查端点转发 Bearer token"
+        );
     }
 }
