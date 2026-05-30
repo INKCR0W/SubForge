@@ -5,7 +5,7 @@ use app_storage::{Database, NodeCacheRepository, SourceRepository};
 use app_transport::{NetworkProfileFactory, TransportProfile};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT};
 use reqwest::redirect::Policy;
-use reqwest::{Client as HttpClient, Url};
+use reqwest::{Client as HttpClient, Response, Url};
 use tokio::time::sleep;
 
 use crate::utils::{now_rfc3339, safe_stderr_line};
@@ -83,7 +83,7 @@ where
         redirect_policy: Option<Policy>,
     ) -> CoreResult<Self> {
         let transport_profile = NetworkProfileFactory::create(network_profile)?;
-        let client = transport_profile.build_client_with_limits(
+        let client = transport_profile.build_client_with_limits_no_auto_decode(
             transport_profile.timeout(),
             transport_profile.max_redirects(),
             redirect_policy,
@@ -145,7 +145,7 @@ where
         let profile_name = self.transport_profile.profile_name();
 
         let mut retry_attempt = 0usize;
-        let response = loop {
+        let mut response = loop {
             if retry_attempt > 0 {
                 let backoff = retry_backoff(self.transport_profile.request_delay(), retry_attempt);
                 sleep(backoff).await;
@@ -240,11 +240,8 @@ where
             .and_then(|value| value.to_str().ok())
             .map(str::to_string);
 
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|error| CoreError::SubscriptionFetch(error.to_string()))?;
-        let decoded_bytes = decode_response_body(bytes.to_vec(), content_encoding.as_deref())
+        let bytes = read_response_body_with_limit(&mut response).await?;
+        let decoded_bytes = decode_response_body(bytes, content_encoding.as_deref())
             .map_err(CoreError::SubscriptionFetch)?;
         if decoded_bytes.len() > MAX_SUBSCRIPTION_BYTES {
             return Err(CoreError::SubscriptionFetch(format!(
@@ -358,4 +355,30 @@ pub(crate) fn retry_backoff(
     base_delay
         .max(std::time::Duration::from_millis(100))
         .saturating_mul(1_u32 << shift)
+}
+
+async fn read_response_body_with_limit(response: &mut Response) -> CoreResult<Vec<u8>> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| CoreError::SubscriptionFetch(error.to_string()))?
+    {
+        let next_len = body
+            .len()
+            .checked_add(chunk.len())
+            .ok_or_else(|| subscription_body_too_large(usize::MAX))?;
+        if next_len > MAX_SUBSCRIPTION_BYTES {
+            return Err(subscription_body_too_large(next_len));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+fn subscription_body_too_large(actual_bytes: usize) -> CoreError {
+    CoreError::SubscriptionFetch(format!(
+        "上游响应体过大：{} bytes（限制 {} bytes）",
+        actual_bytes, MAX_SUBSCRIPTION_BYTES
+    ))
 }

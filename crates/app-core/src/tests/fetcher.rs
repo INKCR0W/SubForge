@@ -1,5 +1,5 @@
 use super::*;
-use std::io::Write;
+use std::io::{Read, Write};
 
 use brotli::CompressorWriter;
 use flate2::Compression;
@@ -219,6 +219,59 @@ async fn static_fetcher_decodes_brotli_subscription_payload() {
     assert_eq!(nodes.len(), 3);
 
     server_task.abort();
+}
+
+#[tokio::test]
+async fn static_fetcher_stops_streaming_chunked_body_when_limit_is_exceeded() {
+    let db = Database::open_in_memory().expect("内存数据库初始化失败");
+    let source_repository = SourceRepository::new(&db);
+    source_repository
+        .insert(&sample_source(
+            "source-fetch-chunked-limit",
+            "subforge.builtin.static",
+        ))
+        .expect("写入来源实例失败");
+
+    let total_chunks = 128usize;
+    let chunk_size = 256 * 1024usize;
+    let (url, generated_chunks, server_task) =
+        start_chunked_stream_server("/sub", total_chunks, chunk_size).await;
+    let parse_calls = Arc::new(AtomicUsize::new(0));
+    let fetcher = StaticFetcher::with_parser(
+        &db,
+        CountingParser {
+            parse_calls: parse_calls.clone(),
+        },
+    )
+    .expect("初始化 StaticFetcher 失败");
+
+    let error = fetcher
+        .fetch_and_cache("source-fetch-chunked-limit", &format!("{url}/sub"), None)
+        .await
+        .expect_err("chunked 超限 body 必须失败");
+
+    assert!(matches!(error, CoreError::SubscriptionFetch(_)));
+    assert_eq!(
+        parse_calls.load(Ordering::SeqCst),
+        0,
+        "超限响应不得进入订阅解析"
+    );
+    assert!(
+        generated_chunks.load(Ordering::SeqCst) < total_chunks,
+        "读取应在超过限制后立即停止，而不是消费完整 chunked 响应"
+    );
+    assert!(
+        NodeCacheRepository::new(&db)
+            .get_by_source("source-fetch-chunked-limit")
+            .expect("查询 node_cache 失败")
+            .is_none(),
+        "超限响应不得写入 node_cache"
+    );
+
+    tokio::time::timeout(Duration::from_secs(2), server_task)
+        .await
+        .expect("chunked 测试服务未及时退出")
+        .expect("chunked 测试服务任务异常退出");
 }
 
 #[test]
@@ -712,6 +765,70 @@ async fn start_encoded_fixture_server(
     });
 
     (base_url, task)
+}
+
+async fn start_chunked_stream_server(
+    route_path: &'static str,
+    total_chunks: usize,
+    chunk_size: usize,
+) -> (String, Arc<AtomicUsize>, JoinHandle<()>) {
+    let generated_chunks = Arc::new(AtomicUsize::new(0));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("启动测试 HTTP 服务失败");
+    let address: SocketAddr = listener.local_addr().expect("读取监听地址失败");
+    let base_url = format!("http://{}", address);
+    let route_path = route_path.to_string();
+    let generated_chunks_for_server = generated_chunks.clone();
+
+    let task = tokio::task::spawn_blocking(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+        let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+
+        let mut request = Vec::new();
+        let mut buffer = [0u8; 1024];
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            match stream.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => request.extend_from_slice(&buffer[..read]),
+                Err(_) => break,
+            }
+            if request.len() > 16 * 1024 {
+                break;
+            }
+        }
+        let request_line = String::from_utf8_lossy(&request);
+        if !request_line.starts_with(&format!("GET {route_path} ")) {
+            let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+            return;
+        }
+
+        if stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nTransfer-Encoding: chunked\r\n\r\n",
+            )
+            .is_err()
+        {
+            return;
+        }
+
+        let chunk = vec![b'a'; chunk_size];
+        let chunk_header = format!("{chunk_size:x}\r\n");
+        for _ in 0..total_chunks {
+            generated_chunks_for_server.fetch_add(1, Ordering::SeqCst);
+            if stream.write_all(chunk_header.as_bytes()).is_err()
+                || stream.write_all(&chunk).is_err()
+                || stream.write_all(b"\r\n").is_err()
+                || stream.flush().is_err()
+            {
+                return;
+            }
+        }
+        let _ = stream.write_all(b"0\r\n\r\n");
+    });
+
+    (base_url, generated_chunks, task)
 }
 
 fn gzip_encode(payload: &[u8]) -> Vec<u8> {

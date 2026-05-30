@@ -72,6 +72,7 @@ pub trait TransportProfile: Send + Sync + std::fmt::Debug {
     fn build_client(&self) -> TransportResult<Client> {
         self.build_client_with_limits(self.timeout(), self.max_redirects(), None)
     }
+
     fn build_client_with_limits(
         &self,
         timeout: Duration,
@@ -85,6 +86,30 @@ pub trait TransportProfile: Send + Sync + std::fmt::Debug {
             self.uses_cookie_store(),
             redirect_policy,
             None,
+            Client::builder(),
+        )
+    }
+    fn build_client_with_limits_no_auto_decode(
+        &self,
+        timeout: Duration,
+        max_redirects: usize,
+        redirect_policy: Option<Policy>,
+    ) -> TransportResult<Client> {
+        // 订阅拉取需要自行按 MAX_SUBSCRIPTION_BYTES 做 raw/decode 双重限制；
+        // 禁用 reqwest 自动解压，避免底层在限制前完成解压并移除 Content-Encoding。
+        let builder = Client::builder()
+            .no_gzip()
+            .no_brotli()
+            .no_deflate()
+            .no_zstd();
+        build_client_with_settings(
+            timeout,
+            max_redirects,
+            self.default_user_agent(),
+            self.uses_cookie_store(),
+            redirect_policy,
+            None,
+            builder,
         )
     }
     fn build_client_with_guarded_dns(
@@ -103,6 +128,7 @@ pub trait TransportProfile: Send + Sync + std::fmt::Debug {
             self.uses_cookie_store(),
             redirect_policy,
             Some(is_forbidden_ip),
+            Client::builder(),
         )
     }
     fn request_delay(&self) -> Duration;
@@ -353,8 +379,9 @@ fn build_client_with_settings(
     use_cookie_store: bool,
     redirect_policy: Option<Policy>,
     is_forbidden_ip: Option<fn(IpAddr) -> bool>,
+    builder: reqwest::ClientBuilder,
 ) -> TransportResult<Client> {
-    let mut builder = Client::builder()
+    let mut builder = builder
         .redirect(redirect_policy.unwrap_or_else(|| Policy::limited(max_redirects)))
         .timeout(timeout)
         .user_agent(user_agent)
