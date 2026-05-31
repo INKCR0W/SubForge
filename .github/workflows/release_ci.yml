@@ -12,6 +12,8 @@ on:
 
 permissions:
   contents: read
+  attestations: write
+  id-token: write
 
 env:
   RELEASE_ARTIFACT_RETENTION_DAYS: 14
@@ -147,6 +149,11 @@ jobs:
           name: subforge-core-${{ matrix.platform }}-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/subforge-core.exe
           retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}
+      - name: Attest core binary (Windows)
+        if: runner.os == 'Windows' && github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: target/${{ matrix.target }}/release/subforge-core.exe
       - name: Upload core binary (Unix)
         if: runner.os != 'Windows'
         uses: actions/upload-artifact@v4
@@ -154,6 +161,11 @@ jobs:
           name: subforge-core-${{ matrix.platform }}-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/subforge-core
           retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}
+      - name: Attest core binary (Unix)
+        if: runner.os != 'Windows' && github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: target/${{ matrix.target }}/release/subforge-core
 
   core-release-linux-musl:
     name: core-release-linux-musl
@@ -185,6 +197,11 @@ jobs:
           name: subforge-core-ubuntu-22.04-x86_64-unknown-linux-musl
           path: target/x86_64-unknown-linux-musl/release/subforge-core
           retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}
+      - name: Attest core binary (Linux musl)
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: target/x86_64-unknown-linux-musl/release/subforge-core
 
   desktop-pipeline-smoke:
     name: desktop-pipeline-smoke-${{ matrix.platform }}-${{ matrix.target }}
@@ -265,6 +282,11 @@ jobs:
           name: subforge-desktop-${{ matrix.platform }}-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/subforge-desktop-tauri.exe
           retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}
+      - name: Attest desktop binary (Windows)
+        if: runner.os == 'Windows' && github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: target/${{ matrix.target }}/release/subforge-desktop-tauri.exe
       - name: Upload desktop binary (Unix)
         if: runner.os != 'Windows'
         uses: actions/upload-artifact@v4
@@ -272,6 +294,11 @@ jobs:
           name: subforge-desktop-${{ matrix.platform }}-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/subforge-desktop-tauri
           retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}
+      - name: Attest desktop binary (Unix)
+        if: runner.os != 'Windows' && github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: target/${{ matrix.target }}/release/subforge-desktop-tauri
 
   desktop-bundle:
     name: desktop-bundle-${{ matrix.platform }}-${{ matrix.target }}
@@ -396,6 +423,11 @@ jobs:
           path: target/${{ matrix.target }}/release/bundle/nsis/*.exe
           if-no-files-found: error
           retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}
+      - name: Attest NSIS bundle
+        if: runner.os == 'Windows' && github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: target/${{ matrix.target }}/release/bundle/nsis/*.exe
       - name: Upload DMG bundle
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
@@ -404,6 +436,11 @@ jobs:
           path: target/${{ matrix.target }}/release/bundle/dmg/*.dmg
           if-no-files-found: error
           retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}
+      - name: Attest DMG bundle
+        if: runner.os == 'macOS' && github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: target/${{ matrix.target }}/release/bundle/dmg/*.dmg
       - name: Upload DEB bundle
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
@@ -412,6 +449,11 @@ jobs:
           path: target/${{ matrix.target }}/release/bundle/deb/*.deb
           if-no-files-found: error
           retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}
+      - name: Attest DEB bundle
+        if: runner.os == 'Linux' && github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: target/${{ matrix.target }}/release/bundle/deb/*.deb
       - name: Upload AppImage bundle
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
@@ -420,6 +462,11 @@ jobs:
           path: target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
           if-no-files-found: error
           retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}
+      - name: Attest AppImage bundle
+        if: runner.os == 'Linux' && github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
 
   desktop-install-smoke-windows:
     name: desktop-install-smoke-windows
@@ -573,3 +620,72 @@ jobs:
           path: ${{ runner.temp }}/desktop-install-smoke-logs
           if-no-files-found: warn
           retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}
+
+  release-metadata:
+    name: release-metadata
+    runs-on: ubuntu-22.04
+    needs:
+      - core-release
+      - core-release-linux-musl
+      - desktop-pipeline-smoke
+      - desktop-bundle
+      - desktop-install-smoke-windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - name: Install SBOM tools
+        run: |
+          cargo install cargo-cyclonedx --version 0.5.9 --locked
+      - name: Generate source SBOMs
+        run: |
+          set -euo pipefail
+          mkdir -p release-sbom
+          cargo cyclonedx \
+            --manifest-path apps/core/Cargo.toml \
+            --format json \
+            --spec-version 1.5 \
+            --override-filename subforge-rust-sbom
+          mv apps/core/subforge-rust-sbom.json release-sbom/subforge-rust-sbom.cdx.json
+          pwsh ./scripts/generate_release_manifest.ps1 \
+            -OutputDirectory release-sbom \
+            -GenerateNodeSbom
+      - name: Download releasable artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: subforge-*
+          path: release-artifact-download
+          merge-multiple: false
+      - name: Stage upload assets
+        shell: pwsh
+        run: |
+          ./scripts/generate_release_manifest.ps1 `
+            -ArtifactsRoot release-artifact-download `
+            -OutputDirectory release-assets-upload `
+            -StageUploadAssets
+          Copy-Item -LiteralPath release-sbom/subforge-rust-sbom.cdx.json -Destination release-assets-upload/subforge-rust-sbom.cdx.json -Force
+          Copy-Item -LiteralPath release-sbom/subforge-node-sbom.cdx.json -Destination release-assets-upload/subforge-node-sbom.cdx.json -Force
+          ./scripts/generate_release_manifest.ps1 `
+            -ArtifactsRoot release-assets-upload `
+            -OutputDirectory release-assets-upload `
+            -Generate
+          ./scripts/generate_release_manifest.ps1 `
+            -OutputDirectory release-assets-upload `
+            -Verify
+      - name: Upload release metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: subforge-release-metadata
+          path: |
+            release-assets-upload/SHA256SUMS
+            release-assets-upload/release-manifest.json
+            release-assets-upload/*-sbom.cdx.json
+          if-no-files-found: error
+          retention-days: ${{ env.RELEASE_ARTIFACT_RETENTION_DAYS }}
+      - name: Attest release metadata
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            release-assets-upload/SHA256SUMS
+            release-assets-upload/release-manifest.json
+            release-assets-upload/*-sbom.cdx.json
