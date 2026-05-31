@@ -298,6 +298,11 @@ impl CoreManager {
         if state.admin_token.is_some() {
             return;
         }
+        // 磁盘上的 admin_token 只能补全当前会话已持有的 child/PID 状态。
+        // 空状态下读取持久 token 无法证明默认端口属于我们启动的 Core，可能泄露给抢占端口的假服务。
+        if state.child.is_none() || state.pid.is_none() {
+            return;
+        }
 
         let token_path = self.core_data_dir.join("admin_token");
         let token = fs::read_to_string(&token_path)
@@ -557,10 +562,18 @@ fn apply_desktop_secret_backend_args(command: &mut Command) {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_desktop_secret_backend_args;
+    use super::{CoreManager, apply_desktop_secret_backend_args};
     use std::ffi::{OsStr, OsString};
+    use std::path::PathBuf;
     use std::process::Command;
-    use std::sync::{Mutex, MutexGuard};
+    use std::sync::{Arc, Mutex, MutexGuard};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use serde_json::json;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::net::TcpListener;
+
+    use crate::desktop::types::CoreState;
 
     static DESKTOP_SECRET_ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -623,6 +636,102 @@ mod tests {
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect()
+    }
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("系统时间应晚于 UNIX_EPOCH")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "subforge-desktop-{prefix}-{}-{suffix}",
+            std::process::id()
+        ))
+    }
+
+    #[tokio::test]
+    async fn compose_status_does_not_send_persisted_admin_token_to_untrusted_port() {
+        let captured_authorizations = Arc::new(Mutex::new(Vec::<String>::new()));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("启动假 Core 服务失败");
+        let address = listener.local_addr().expect("读取假 Core 地址失败");
+        let server_captured_authorizations = Arc::clone(&captured_authorizations);
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _peer)) = listener.accept().await else {
+                    break;
+                };
+                let server_captured_authorizations = Arc::clone(&server_captured_authorizations);
+                tokio::spawn(async move {
+                    let mut buffer = vec![0_u8; 4096];
+                    let Ok(read_bytes) = stream.read(&mut buffer).await else {
+                        return;
+                    };
+                    let request = String::from_utf8_lossy(&buffer[..read_bytes]);
+                    if let Some(header_value) = request
+                        .lines()
+                        .find_map(|line| line.strip_prefix("authorization: "))
+                        .or_else(|| {
+                            request
+                                .lines()
+                                .find_map(|line| line.strip_prefix("Authorization: "))
+                        })
+                    {
+                        server_captured_authorizations
+                            .lock()
+                            .expect("捕获列表锁异常")
+                            .push(header_value.to_string());
+                    }
+
+                    let first_line = request.lines().next().unwrap_or_default();
+                    let path = first_line.split_whitespace().nth(1).unwrap_or_default();
+                    let (status, body) = match path {
+                        "/health" => (
+                            "200 OK",
+                            json!({ "status": "ok", "version": "fake-core" }).to_string(),
+                        ),
+                        "/api/system/status" => ("401 Unauthorized", String::new()),
+                        _ => ("404 Not Found", String::new()),
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+
+        let core_data_dir = unique_temp_dir("persisted-admin-token");
+        std::fs::create_dir_all(&core_data_dir).expect("创建测试数据目录失败");
+        std::fs::write(core_data_dir.join("admin_token"), "persisted-admin-token\n")
+            .expect("写入测试 admin_token 失败");
+
+        let manager = CoreManager {
+            workspace_root: None,
+            core_data_dir: core_data_dir.clone(),
+            state: Mutex::new(CoreState {
+                base_url: format!("http://{address}"),
+                ..CoreState::default()
+            }),
+            client: reqwest::Client::new(),
+        };
+
+        let _status = manager
+            .compose_status_payload()
+            .await
+            .expect("读取 Core 状态不应失败");
+
+        assert!(
+            captured_authorizations
+                .lock()
+                .expect("捕获列表锁异常")
+                .is_empty(),
+            "没有可信 child/PID/instance proof 时，不得向抢占端口发送持久化 admin_token"
+        );
+
+        let _ = std::fs::remove_dir_all(core_data_dir);
     }
 
     #[test]
