@@ -491,7 +491,7 @@ fn vless_reality_parameters_roundtrip_to_share_link_clash_and_singbox() {
     );
 
     let clash_yaml = ClashTransformer::default()
-        .transform(&[node.clone()], &test_profile())
+        .transform(std::slice::from_ref(&node), &test_profile())
         .expect("转换 Clash YAML 失败");
     let clash_value: Value = serde_yaml::from_str(&clash_yaml).expect("Clash YAML 应合法");
     let clash_proxy = clash_value
