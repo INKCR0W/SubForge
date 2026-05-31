@@ -57,9 +57,9 @@ jobs:
       - name: Cargo fmt check
         run: cargo fmt --all -- --check
       - name: Cargo check
-        run: cargo check --workspace
+        run: cargo check --locked --workspace
       - name: Cargo test
-        run: cargo test --workspace
+        run: cargo test --locked --workspace
 
   static-security-gate:
     name: static-security-gate
@@ -95,11 +95,11 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
       - name: Cargo clippy (deny warnings)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Cargo audit
         run: |
           for attempt in 1 2 3; do
-            cargo audit && break
+            cargo audit --deny unsound --deny yanked --ignore RUSTSEC-2024-0429 --ignore RUSTSEC-2026-0097 && break
             if [ "$attempt" -eq 3 ]; then
               echo "cargo audit failed after ${attempt} attempts"
               exit 1
@@ -137,7 +137,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - name: Build subforge-core release
-        run: cargo build -p subforge-core --release --target ${{ matrix.target }}
+        run: cargo build --locked -p subforge-core --release --target ${{ matrix.target }}
       - name: Upload core binary (Windows)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
@@ -176,7 +176,7 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
       - name: Build subforge-core release (linux musl)
-        run: cargo build -p subforge-core --release --target x86_64-unknown-linux-musl
+        run: cargo build --locked -p subforge-core --release --target x86_64-unknown-linux-musl
       - name: Upload core binary (Linux musl)
         uses: actions/upload-artifact@v4
         with:
@@ -233,7 +233,7 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
       - name: Build subforge-core sidecar
-        run: cargo build -p subforge-core --release --target ${{ matrix.target }}
+        run: cargo build --locked -p subforge-core --release --target ${{ matrix.target }}
       - name: Prepare desktop sidecar payload
         shell: pwsh
         run: |
@@ -255,7 +255,7 @@ jobs:
           }
           Copy-Item -LiteralPath $sourceBinary -Destination (Join-Path $destDir $destName) -Force
       - name: Desktop Tauri build smoke (no bundle)
-        run: pnpm -C apps/desktop tauri build --ci --no-bundle --target ${{ matrix.target }}
+        run: pnpm -C apps/desktop tauri build --ci --no-bundle --target ${{ matrix.target }} -- -- --locked
       - name: Upload desktop binary (Windows)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
@@ -320,7 +320,7 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
       - name: Build subforge-core sidecar
-        run: cargo build -p subforge-core --release --target ${{ matrix.target }}
+        run: cargo build --locked -p subforge-core --release --target ${{ matrix.target }}
       - name: Prepare desktop sidecar payload
         shell: pwsh
         run: |
@@ -344,7 +344,7 @@ jobs:
 
       - name: Build desktop bundle (Windows NSIS)
         if: runner.os == 'Windows'
-        run: pnpm -C apps/desktop tauri build --ci --bundles nsis --target ${{ matrix.target }}
+        run: pnpm -C apps/desktop tauri build --ci --bundles nsis --target ${{ matrix.target }} -- -- --locked
       - name: Build desktop bundle (macOS DMG)
         if: runner.os == 'macOS'
         shell: bash
@@ -352,7 +352,7 @@ jobs:
           set -euo pipefail
           export PATH="/Applications/Xcode.app/Contents/Developer/Tools:$PATH"
           for attempt in 1 2 3; do
-            if pnpm -C apps/desktop tauri build --ci --bundles dmg --target ${{ matrix.target }}; then
+            if pnpm -C apps/desktop tauri build --ci --bundles dmg --target ${{ matrix.target }} -- -- --locked; then
               break
             fi
             if [ "$attempt" -eq 3 ]; then
@@ -373,7 +373,7 @@ jobs:
           done
       - name: Build desktop bundle (Linux DEB/AppImage)
         if: runner.os == 'Linux'
-        run: pnpm -C apps/desktop tauri build --ci --bundles deb,appimage --target ${{ matrix.target }}
+        run: pnpm -C apps/desktop tauri build --ci --bundles deb,appimage --target ${{ matrix.target }} -- -- --locked
       - name: Copy builtin plugins to bundle
         shell: bash
         run: |

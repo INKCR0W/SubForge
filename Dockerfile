@@ -10,7 +10,7 @@ COPY migrations ./migrations
 COPY plugins ./plugins
 COPY subforge.example.toml ./
 
-RUN cargo build -p subforge-core --release
+RUN cargo build --locked -p subforge-core --release
 
 FROM debian:bookworm-slim AS runtime
 

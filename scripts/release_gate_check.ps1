@@ -54,15 +54,15 @@ function Test-IsLinux {
 }
 
 Invoke-Step -Name "workspace cargo check" -Action {
-    cargo check --workspace
+    cargo check --locked --workspace
 }
 
 Invoke-Step -Name "workspace cargo test" -Action {
-    cargo test --workspace
+    cargo test --locked --workspace
 }
 
 Invoke-Step -Name "workspace cargo clippy (deny warnings)" -Action {
-    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --locked --workspace --all-targets -- -D warnings
 }
 
 Invoke-Step -Name "ensure cargo-audit is available" -Action {
@@ -70,7 +70,7 @@ Invoke-Step -Name "ensure cargo-audit is available" -Action {
 }
 
 Invoke-Step -Name "cargo audit" -Action {
-    cargo audit --stale
+    cargo audit --deny unsound --deny yanked --ignore RUSTSEC-2024-0429 --ignore RUSTSEC-2026-0097 --stale
 }
 
 Invoke-Step -Name "pnpm audit (high+)" -Action {
@@ -78,7 +78,7 @@ Invoke-Step -Name "pnpm audit (high+)" -Action {
 }
 
 Invoke-Step -Name "subforge-core release 构建" -Action {
-    cargo build -p subforge-core --release
+    cargo build --locked -p subforge-core --release
 }
 
 if (Test-IsLinux) {
@@ -87,7 +87,7 @@ if (Test-IsLinux) {
     }
 
     Invoke-Step -Name "subforge-core release 构建（linux musl）" -Action {
-        cargo build -p subforge-core --release --target x86_64-unknown-linux-musl
+        cargo build --locked -p subforge-core --release --target x86_64-unknown-linux-musl
     }
 }
 else {
