@@ -94,6 +94,8 @@ jobs:
           cache: pnpm
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+      - name: Desktop frontend tests
+        run: pnpm --filter @subforge/desktop test
       - name: Cargo clippy (deny warnings)
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Cargo audit

@@ -113,13 +113,35 @@ fn file_store_encrypts_and_handles_wrong_password() -> SecretResult<()> {
 }
 
 #[test]
+#[ignore = "机会型 keyring 测试默认不运行；设置 SUBFORGE_REQUIRE_KEYRING_TEST=1 后用 --ignored 强制验证真实后端"]
 fn keyring_store_roundtrip_when_backend_available() -> SecretResult<()> {
+    exercise_keyring_roundtrip(require_keyring_test())
+}
+
+#[test]
+fn keyring_store_roundtrip_is_mandatory_when_required() -> SecretResult<()> {
+    if !require_keyring_test() {
+        return Ok(());
+    }
+
+    exercise_keyring_roundtrip(true)
+}
+
+fn require_keyring_test() -> bool {
+    std::env::var("SUBFORGE_REQUIRE_KEYRING_TEST")
+        .is_ok_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
+}
+
+fn exercise_keyring_roundtrip(require_keyring: bool) -> SecretResult<()> {
     let store = KeyringSecretStore::new();
     let unique = unique_scope_suffix();
     let scope = format!("plugin:keyring_test_{unique}");
     let key = "password";
 
     if let Err(error) = store.set(&scope, key, "from-keyring") {
+        if require_keyring {
+            return Err(error);
+        }
         eprintln!("跳过 keyring 可用性测试：{error}");
         return Ok(());
     }
@@ -127,8 +149,13 @@ fn keyring_store_roundtrip_when_backend_available() -> SecretResult<()> {
     let value = match store.get(&scope, key) {
         Ok(value) => value,
         Err(SecretError::SecretMissing(_)) => {
-            eprintln!("跳过 keyring 可用性测试：当前环境无法回读写入项");
             let _ = store.delete(&scope, key);
+            if require_keyring {
+                return Err(SecretError::Backend(
+                    "SUBFORGE_REQUIRE_KEYRING_TEST=1 时 keyring 写入后必须能回读".to_string(),
+                ));
+            }
+            eprintln!("跳过 keyring 可用性测试：当前环境无法回读写入项");
             return Ok(());
         }
         Err(error) => return Err(error),

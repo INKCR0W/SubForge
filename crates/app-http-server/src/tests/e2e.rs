@@ -1,5 +1,3 @@
-use std::fs;
-
 use crate::helpers::list_profile_source_ids;
 use app_storage::{SettingsRepository, SourceConfigRepository, SourceRepository};
 use axum::body::{Body, to_bytes};
@@ -47,6 +45,9 @@ rules:
   - MATCH,Proxy
 "#;
 
+const REAL_CLASH_TEMPLATE_FIXTURE: &str =
+    include_str!("../../tests/fixtures/real_clash_template.yaml");
+
 const SINGBOX_TEMPLATE_FIXTURE: &str = r#"
 {
   "outbounds": [
@@ -82,29 +83,6 @@ const SINGBOX_TEMPLATE_FIXTURE: &str = r#"
   }
 }
 "#;
-
-fn load_real_clash_template_fixture() -> Option<String> {
-    let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../sub.txt")
-        .canonicalize()
-        .ok()
-        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sub.txt"));
-    let Ok(bytes) = fs::read(&fixture_path) else {
-        eprintln!(
-            "跳过真实 Clash 模板 e2e：未找到本地文件 {}",
-            fixture_path.display()
-        );
-        return None;
-    };
-    if bytes.starts_with(&[0xFF, 0xFE]) {
-        let utf16 = bytes[2..]
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-            .collect::<Vec<_>>();
-        return Some(String::from_utf16(&utf16).expect("sub.txt UTF-16 解码失败"));
-    }
-    Some(String::from_utf8(bytes).expect("sub.txt UTF-8 解码失败"))
-}
 
 async fn import_builtin_plugin(app: &axum::Router) {
     let boundary = "----subforge-e2e-r11-plugin-boundary";
@@ -1481,14 +1459,14 @@ async fn e2e_profile_update_rejects_invalid_template_source_without_partial_writ
 
 #[tokio::test]
 async fn e2e_profile_real_clash_template_source_preserves_original_nodes() {
-    let Some(real_fixture) = load_real_clash_template_fixture() else {
-        return;
-    };
     let state = build_test_state();
     let app = build_router(state.clone());
 
-    let (template_upstream_base, template_server_task) =
-        start_fixture_server(real_fixture.trim().to_string(), "text/yaml; charset=utf-8").await;
+    let (template_upstream_base, template_server_task) = start_fixture_server(
+        REAL_CLASH_TEMPLATE_FIXTURE.trim().to_string(),
+        "text/yaml; charset=utf-8",
+    )
+    .await;
 
     let boundary = "----subforge-e2e-real-template-boundary";
     let plugin_zip = build_builtin_plugin_zip_bytes();
