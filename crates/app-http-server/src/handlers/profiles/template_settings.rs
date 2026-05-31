@@ -1,8 +1,8 @@
-use app_common::{AppSetting, ClashRoutingTemplate, ErrorResponse};
+use app_common::{ClashRoutingTemplate, ErrorResponse};
 use axum::Json;
 use axum::http::StatusCode;
 
-use super::{config_error_response, current_timestamp_rfc3339, validate_source_ids_exist};
+use super::{config_error_response, validate_source_ids_exist};
 
 pub(super) fn profile_routing_template_source_key(profile_id: &str) -> String {
     format!("profile.{profile_id}.clash_template_source_id")
@@ -43,27 +43,6 @@ pub(super) fn ensure_routing_template_source_in_scope(
         ));
     }
     Ok(())
-}
-
-pub(super) fn persist_profile_routing_template_source(
-    database: &app_storage::Database,
-    profile_id: &str,
-    routing_template_source_id: Option<&str>,
-) -> app_storage::StorageResult<()> {
-    let repository = app_storage::SettingsRepository::new(database);
-    let key = profile_routing_template_source_key(profile_id);
-    match routing_template_source_id {
-        Some(source_id) => repository.set(&AppSetting {
-            key,
-            value: source_id.to_string(),
-            updated_at: current_timestamp_rfc3339()
-                .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string()),
-        }),
-        None => {
-            repository.delete(&key)?;
-            Ok(())
-        }
-    }
 }
 
 pub(super) fn resolve_profile_routing_template_source(

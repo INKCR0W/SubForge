@@ -54,6 +54,21 @@ impl Database {
         operation(&mut connection)
     }
 
+    /// 在单个 SQLite 事务内执行一组写操作。
+    ///
+    /// 业务层使用该 helper 可以避免“前半段写入成功、后半段失败”
+    /// 造成 Source/Profile/Settings 等聚合状态不一致。
+    pub fn with_transaction<T, F>(&self, operation: F) -> StorageResult<T>
+    where
+        F: FnOnce(&rusqlite::Transaction<'_>) -> StorageResult<T>,
+    {
+        let mut connection = self.lock_connection()?;
+        let transaction = connection.transaction()?;
+        let result = operation(&transaction)?;
+        transaction.commit()?;
+        Ok(result)
+    }
+
     fn initialize_connection(connection: &mut Connection) -> StorageResult<()> {
         connection.pragma_update(None, "foreign_keys", true)?;
         connection.execute_batch("PRAGMA journal_mode = WAL;")?;

@@ -59,30 +59,9 @@ pub(crate) async fn update_source_handler(
         state.secret_store.as_ref(),
     );
 
-    let mut source = if let Some(config) = payload.config {
-        service
-            .update_source_config(&id, config)
-            .map_err(core_error_to_response)?
-    } else {
-        service
-            .get_source(&id)
-            .map_err(core_error_to_response)?
-            .ok_or_else(|| not_found_error_response("来源不存在"))?
-    };
-
-    if let Some(name) = payload.name {
-        let name = name.trim();
-        if name.is_empty() {
-            return Err(config_error_response("name 不能为空"));
-        }
-        source.source.name = name.to_string();
-        source.source.updated_at =
-            current_timestamp_rfc3339().map_err(|_| internal_error_response())?;
-        let source_repository = SourceRepository::new(state.database.as_ref());
-        source_repository
-            .update(&source.source)
-            .map_err(storage_error_to_response)?;
-    }
+    let source = service
+        .update_source(&id, payload.name.as_deref(), payload.config)
+        .map_err(core_error_to_response)?;
 
     emit_event(
         &state,

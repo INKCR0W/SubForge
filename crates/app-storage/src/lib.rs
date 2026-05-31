@@ -17,3 +17,4 @@ pub use repositories::{
     RefreshJobRepository, ScriptLogRepository, SettingsRepository, SourceConfigRepository,
     SourceRepository,
 };
+pub use rusqlite::{Transaction, params};

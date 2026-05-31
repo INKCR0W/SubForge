@@ -78,20 +78,28 @@ pub(crate) async fn update_system_settings_handler(
         return Err(config_error_response("请求体 settings 不能为空"));
     }
     let updated_at = current_timestamp_rfc3339().map_err(|_| internal_error_response())?;
-    let repository = SettingsRepository::new(state.database.as_ref());
-    for (key, value) in payload.settings {
+    for key in payload.settings.keys() {
         if key.trim().is_empty() {
             return Err(config_error_response("设置键不能为空"));
         }
-        repository
-            .set(&AppSetting {
-                key,
-                value,
-                updated_at: updated_at.clone(),
-            })
-            .map_err(storage_error_to_response)?;
     }
+    state
+        .database
+        .with_transaction(|tx| {
+            for (key, value) in &payload.settings {
+                tx.execute(
+                    "INSERT INTO app_settings (key, value, updated_at)
+                     VALUES (?1, ?2, ?3)
+                     ON CONFLICT(key)
+                     DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                    rusqlite::params![key, value, updated_at],
+                )?;
+            }
+            Ok(())
+        })
+        .map_err(storage_error_to_response)?;
 
+    let repository = SettingsRepository::new(state.database.as_ref());
     let settings = repository.get_all().map_err(storage_error_to_response)?;
     Ok((
         StatusCode::OK,

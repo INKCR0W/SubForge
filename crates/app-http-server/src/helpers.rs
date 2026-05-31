@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Cursor, Write};
 use std::path::{Component, Path};
@@ -111,6 +111,15 @@ pub(crate) fn validate_source_ids_exist(
     db: &Database,
     source_ids: &[String],
 ) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    let mut seen = BTreeSet::new();
+    for source_id in source_ids {
+        if !seen.insert(source_id) {
+            return Err(config_error_response(&format!(
+                "source_id 重复：{source_id}"
+            )));
+        }
+    }
+
     let source_repository = SourceRepository::new(db);
     for source_id in source_ids {
         if source_repository
@@ -124,29 +133,6 @@ pub(crate) fn validate_source_ids_exist(
         }
     }
     Ok(())
-}
-
-pub(crate) fn replace_profile_sources(
-    db: &Database,
-    profile_id: &str,
-    source_ids: &[String],
-) -> Result<(), StorageError> {
-    db.with_connection(|connection| {
-        let tx = connection.transaction()?;
-        tx.execute(
-            "DELETE FROM profile_sources WHERE profile_id = ?1",
-            [profile_id],
-        )?;
-        for (index, source_id) in source_ids.iter().enumerate() {
-            tx.execute(
-                "INSERT INTO profile_sources (profile_id, source_instance_id, priority)
-                 VALUES (?1, ?2, ?3)",
-                rusqlite::params![profile_id, source_id, index as i64],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
-    })
 }
 
 pub(crate) fn list_profile_source_ids(

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use app_common::SourceInstance;
 use app_plugin_runtime::LoadedPlugin;
-use app_storage::{SourceConfigRepository, SourceRepository};
+use app_storage::{SourceConfigRepository, SourceRepository, Transaction, params};
 use serde_json::Value;
 use time::OffsetDateTime;
 
@@ -118,48 +118,85 @@ impl<'a> SourceService<'a> {
         source_id: &str,
         config: BTreeMap<String, Value>,
     ) -> CoreResult<SourceWithConfig> {
+        self.update_source(source_id, None, Some(config))
+    }
+
+    pub fn update_source(
+        &self,
+        source_id: &str,
+        name: Option<&str>,
+        config: Option<BTreeMap<String, Value>>,
+    ) -> CoreResult<SourceWithConfig> {
+        let has_config_update = config.is_some();
         let source_repository = SourceRepository::new(self.db);
-        let mut source = source_repository
+        let source = source_repository
             .get_by_id(source_id)?
             .ok_or_else(|| CoreError::SourceNotFound(source_id.to_string()))?;
         let loaded = self.load_installed_plugin(&source.plugin_id)?;
         let config_repository = SourceConfigRepository::new(self.db);
-        let previous_non_secret = config_repository.get_all(&source.id)?;
+        let stored_config = config_repository.get_all(&source.id)?;
         let scope = source_scope(&source.id);
         let previous_source_secret =
             self.snapshot_secret_values(&scope, &loaded.manifest.secret_fields)?;
         let previous_effective_secret =
             self.snapshot_source_secret_values(&source, &loaded.manifest.secret_fields)?;
-        let effective_config =
-            self.apply_secret_placeholders(&loaded, config, &previous_effective_secret)?;
-        let prepared = self.validate_and_split_config(&loaded, &effective_config)?;
 
-        if let Err(error) =
-            self.persist_source_config(&source, &loaded, &prepared, &config_repository, true)
-        {
-            let _ = config_repository.replace_all(&source.id, &previous_non_secret);
-            let _ = self.restore_secret_values(
-                &scope,
-                &loaded.manifest.secret_fields,
-                &previous_source_secret,
-            );
-            return Err(error);
+        let (prepared, response_config) = match config {
+            Some(config) => {
+                let effective_config =
+                    self.apply_secret_placeholders(&loaded, config, &previous_effective_secret)?;
+                let prepared = self.validate_and_split_config(&loaded, &effective_config)?;
+                let response_config = masked_config(&loaded, &prepared.normalized);
+                (Some(prepared), response_config)
+            }
+            None => {
+                let response_config =
+                    self.inflate_source_config(&source, &loaded, &stored_config, true)?;
+                (None, response_config)
+            }
+        };
+
+        let mut updated_source = source.clone();
+        if let Some(name) = name {
+            let name = name.trim();
+            if name.is_empty() {
+                return Err(CoreError::ConfigInvalid("name 不能为空".to_string()));
+            }
+            updated_source.name = name.to_string();
         }
+        updated_source.updated_at = now_rfc3339()?;
 
-        source.updated_at = now_rfc3339()?;
-        if let Err(error) = source_repository.update(&source) {
-            let _ = config_repository.replace_all(&source.id, &previous_non_secret);
-            let _ = self.restore_secret_values(
-                &scope,
-                &loaded.manifest.secret_fields,
-                &previous_source_secret,
-            );
+        if let Err(error) = self.db.with_transaction(|tx| {
+            if let Some(prepared) = prepared.as_ref() {
+                replace_source_config_in_transaction(tx, &source.id, &prepared.non_secret)?;
+            }
+            update_source_in_transaction(tx, &updated_source)?;
+            Ok(())
+        }) {
             return Err(error.into());
         }
 
+        if let Some(prepared) = prepared.as_ref() {
+            if let Err(error) =
+                self.persist_source_secrets(&source, &loaded, prepared, has_config_update)
+            {
+                let _ = self.db.with_transaction(|tx| {
+                    replace_source_config_in_transaction(tx, &source.id, &stored_config)?;
+                    update_source_in_transaction(tx, &source)?;
+                    Ok(())
+                });
+                let _ = self.restore_secret_values(
+                    &scope,
+                    &loaded.manifest.secret_fields,
+                    &previous_source_secret,
+                );
+                return Err(error);
+            }
+        }
+
         Ok(SourceWithConfig {
-            source,
-            config: masked_config(&loaded, &prepared.normalized),
+            source: updated_source,
+            config: response_config,
         })
     }
 
@@ -218,4 +255,69 @@ impl<'a> SourceService<'a> {
         }
         Ok(())
     }
+
+    fn persist_source_secrets(
+        &self,
+        source: &SourceInstance,
+        loaded: &LoadedPlugin,
+        prepared: &PreparedConfig,
+        prune_secret: bool,
+    ) -> CoreResult<()> {
+        let scope = source_scope(&source.id);
+        for (key, value) in &prepared.secret {
+            self.secret_store.set(&scope, key, value)?;
+        }
+        if prune_secret {
+            for key in &loaded.manifest.secret_fields {
+                if !prepared.secret.contains_key(key) {
+                    self.secret_store.delete(&scope, key)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn replace_source_config_in_transaction(
+    tx: &Transaction<'_>,
+    source_instance_id: &str,
+    values: &BTreeMap<String, String>,
+) -> app_storage::StorageResult<()> {
+    tx.execute(
+        "DELETE FROM source_instance_config WHERE source_instance_id = ?1",
+        [source_instance_id],
+    )?;
+    for (key, value) in values {
+        tx.execute(
+            "INSERT INTO source_instance_config (id, source_instance_id, key, value)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                format!("{source_instance_id}:{key}"),
+                source_instance_id,
+                key,
+                value
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn update_source_in_transaction(
+    tx: &Transaction<'_>,
+    source: &SourceInstance,
+) -> app_storage::StorageResult<usize> {
+    let affected = tx.execute(
+        "UPDATE source_instances
+         SET plugin_id = ?1, name = ?2, status = ?3, state_json = ?4, updated_at = ?5
+         WHERE id = ?6",
+        params![
+            source.plugin_id,
+            source.name,
+            source.status,
+            source.state_json,
+            source.updated_at,
+            source.id
+        ],
+    )?;
+    Ok(affected)
 }

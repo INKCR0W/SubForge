@@ -1,7 +1,7 @@
 use std::fs;
 
 use crate::helpers::list_profile_source_ids;
-use app_storage::SettingsRepository;
+use app_storage::{SettingsRepository, SourceConfigRepository, SourceRepository};
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header::CONTENT_TYPE, header::HOST};
 use base64::Engine;
@@ -104,6 +104,214 @@ fn load_real_clash_template_fixture() -> Option<String> {
         return Some(String::from_utf16(&utf16).expect("sub.txt UTF-16 解码失败"));
     }
     Some(String::from_utf8(bytes).expect("sub.txt UTF-8 解码失败"))
+}
+
+async fn import_builtin_plugin(app: &axum::Router) {
+    let boundary = "----subforge-e2e-r11-plugin-boundary";
+    let plugin_zip = build_builtin_plugin_zip_bytes();
+    let import_body = build_multipart_plugin_body(boundary, &plugin_zip, "builtin-static.zip");
+    let import_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/plugins/import")
+                .header(HOST, "127.0.0.1:18118")
+                .header("authorization", "Bearer test-admin-token")
+                .header(
+                    CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(import_body))
+                .expect("构建导入插件请求失败"),
+        )
+        .await
+        .expect("导入插件请求执行失败");
+    assert_eq!(import_response.status(), StatusCode::CREATED);
+}
+
+async fn create_static_source(
+    app: &axum::Router,
+    name: &str,
+    url: &str,
+) -> (String, serde_json::Value) {
+    let source_response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::POST,
+            "/api/sources",
+            &json!({
+                "plugin_id": "test.plugin.import-stub",
+                "name": name,
+                "config": {
+                    "url": url
+                }
+            }),
+        ))
+        .await
+        .expect("创建来源请求执行失败");
+    assert_eq!(source_response.status(), StatusCode::CREATED);
+    let source_payload = read_json(source_response).await;
+    let source_id = source_payload
+        .pointer("/source/source/id")
+        .and_then(Value::as_str)
+        .expect("来源响应缺少 source.id")
+        .to_string();
+    (source_id, source_payload)
+}
+
+async fn create_profile(app: &axum::Router, name: &str, source_ids: Vec<String>) -> String {
+    let profile_response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::POST,
+            "/api/profiles",
+            &json!({
+                "name": name,
+                "source_ids": source_ids
+            }),
+        ))
+        .await
+        .expect("创建 Profile 请求执行失败");
+    assert_eq!(profile_response.status(), StatusCode::CREATED);
+    let profile_payload = read_json(profile_response).await;
+    profile_payload
+        .pointer("/profile/profile/id")
+        .and_then(Value::as_str)
+        .expect("Profile 响应缺少 id")
+        .to_string()
+}
+
+#[tokio::test]
+async fn e2e_update_source_rejects_empty_name_without_changing_config() {
+    let state = build_test_state();
+    let app = build_router(state.clone());
+    import_builtin_plugin(&app).await;
+
+    let (source_id, _payload) =
+        create_static_source(&app, "R11 Source", "https://example.com/old-sub").await;
+
+    let update_response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::PUT,
+            &format!("/api/sources/{source_id}"),
+            &json!({
+                "name": "   ",
+                "config": {
+                    "url": "https://example.com/new-sub"
+                }
+            }),
+        ))
+        .await
+        .expect("更新来源请求执行失败");
+    assert_eq!(update_response.status(), StatusCode::BAD_REQUEST);
+
+    let source_repository = SourceRepository::new(state.database.as_ref());
+    let persisted_source = source_repository
+        .get_by_id(&source_id)
+        .expect("读取来源失败")
+        .expect("来源应仍然存在");
+    assert_eq!(persisted_source.name, "R11 Source");
+
+    let config_repository = SourceConfigRepository::new(state.database.as_ref());
+    let persisted_config = config_repository
+        .get_all(&source_id)
+        .expect("读取来源配置失败");
+    assert_eq!(
+        persisted_config.get("url").map(String::as_str),
+        Some("\"https://example.com/old-sub\""),
+        "失败更新不应写入新的 config"
+    );
+}
+
+#[tokio::test]
+async fn e2e_update_profile_rejects_duplicate_source_ids_without_changing_profile() {
+    let state = build_test_state();
+    let app = build_router(state.clone());
+    import_builtin_plugin(&app).await;
+
+    let (source_a_id, _payload) =
+        create_static_source(&app, "R11 Source A", "https://example.com/a").await;
+    let (source_b_id, _payload) =
+        create_static_source(&app, "R11 Source B", "https://example.com/b").await;
+    let profile_id = create_profile(
+        &app,
+        "R11 Profile",
+        vec![source_a_id.clone(), source_b_id.clone()],
+    )
+    .await;
+
+    let update_response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::PUT,
+            &format!("/api/profiles/{profile_id}"),
+            &json!({
+                "name": "R11 Mutated Profile",
+                "source_ids": [source_b_id.clone(), source_b_id.clone()]
+            }),
+        ))
+        .await
+        .expect("更新 Profile 请求执行失败");
+    assert_eq!(update_response.status(), StatusCode::BAD_REQUEST);
+
+    let profile_repository = app_storage::ProfileRepository::new(state.database.as_ref());
+    let persisted_profile = profile_repository
+        .get_by_id(&profile_id)
+        .expect("读取 Profile 失败")
+        .expect("Profile 应仍然存在");
+    assert_eq!(persisted_profile.name, "R11 Profile");
+    let persisted_source_ids = list_profile_source_ids(state.database.as_ref(), &profile_id)
+        .expect("读取 Profile 来源失败");
+    assert_eq!(persisted_source_ids, vec![source_a_id, source_b_id]);
+}
+
+#[tokio::test]
+async fn e2e_update_settings_rolls_back_if_later_item_fails() {
+    let state = build_test_state();
+    let app = build_router(state.clone());
+    state
+        .database
+        .with_connection(|connection| {
+            connection.execute_batch(
+                r#"
+                CREATE TRIGGER app_settings_r11_fail
+                BEFORE INSERT ON app_settings
+                WHEN NEW.key = 'zz.fail'
+                BEGIN
+                    SELECT RAISE(ABORT, 'r11 injected settings failure');
+                END;
+                "#,
+            )?;
+            Ok(())
+        })
+        .expect("创建 settings 失败注入 trigger 失败");
+
+    let update_response = app
+        .clone()
+        .oneshot(admin_json_request(
+            Method::PUT,
+            "/api/system/settings",
+            &json!({
+                "settings": {
+                    "aa.ok": "committed-too-early",
+                    "zz.fail": "boom"
+                }
+            }),
+        ))
+        .await
+        .expect("更新 settings 请求执行失败");
+    assert_eq!(update_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let settings_repository = SettingsRepository::new(state.database.as_ref());
+    assert!(
+        settings_repository
+            .get("aa.ok")
+            .expect("读取 settings 失败")
+            .is_none(),
+        "settings 批量存储失败时，前序成功项也不应提交"
+    );
 }
 
 #[tokio::test]

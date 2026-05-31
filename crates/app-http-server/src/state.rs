@@ -74,7 +74,7 @@ impl ServerContext {
             auth_failures: Arc::new(AuthFailures::default()),
             profile_cache: Arc::new(ProfileCache::default()),
             source_userinfo_cache: Arc::new(SourceUserinfoCache::default()),
-            refresh_registry: RefreshRegistry::global(),
+            refresh_registry: RefreshRegistry::new(),
         }
     }
 

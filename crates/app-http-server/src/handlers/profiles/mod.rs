@@ -19,8 +19,8 @@ mod write;
 use template_export::build_template_export_nodes;
 use template_settings::{
     ensure_routing_template_source_in_scope, load_clash_routing_template_for_profile,
-    normalize_routing_template_source_id, persist_profile_routing_template_source,
-    profile_routing_template_source_key, resolve_profile_routing_template_source,
+    normalize_routing_template_source_id, profile_routing_template_source_key,
+    resolve_profile_routing_template_source,
 };
 
 pub(crate) use export::{

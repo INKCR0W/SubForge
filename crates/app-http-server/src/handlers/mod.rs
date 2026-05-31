@@ -4,7 +4,7 @@ use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
 
-use app_common::{AppSetting, ConfigSchema, Plugin, Profile, ProxyNode, SourceInstance};
+use app_common::{ConfigSchema, Plugin, Profile, ProxyNode, SourceInstance};
 use app_core::{Engine, PluginInstallService, SourceService};
 use app_storage::{
     ExportTokenRepository, NodeCacheRepository, PluginRepository, ProfileRepository,
@@ -26,8 +26,8 @@ use crate::helpers::{
     config_error_response, core_error_to_response, current_timestamp_rfc3339, emit_event,
     error_response, extract_zip_to_dir, internal_error_response, list_profile_ids_by_source,
     list_profile_source_ids, load_plugin_by_route_id, map_settings, not_found_error_response,
-    replace_profile_sources, source_with_config_to_dto, storage_error_to_response,
-    validate_source_ids_exist, validate_zip_safety,
+    source_with_config_to_dto, storage_error_to_response, validate_source_ids_exist,
+    validate_zip_safety,
 };
 use crate::state::{
     APP_VERSION, ApiResult, HealthResponse, MAX_PLUGIN_UPLOAD_BYTES, ServerContext,

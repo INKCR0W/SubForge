@@ -18,6 +18,7 @@ pub(crate) async fn create_profile_handler(
     )?;
 
     let now = current_timestamp_rfc3339().map_err(|_| internal_error_response())?;
+    let export_token = generate_export_token().map_err(|_| internal_error_response())?;
     let profile = Profile {
         id: format!(
             "profile-{}",
@@ -29,38 +30,20 @@ pub(crate) async fn create_profile_handler(
         created_at: now.clone(),
         updated_at: now,
     };
-    let repository = ProfileRepository::new(state.database.as_ref());
-    repository
-        .insert(&profile)
+    state
+        .database
+        .with_transaction(|tx| {
+            insert_profile_in_transaction(tx, &profile)?;
+            replace_profile_sources_in_transaction(tx, &profile.id, &payload.source_ids)?;
+            persist_profile_routing_template_source_in_transaction(
+                tx,
+                &profile.id,
+                routing_template_source_id.as_deref(),
+            )?;
+            insert_profile_export_token_in_transaction(tx, &profile.id, &export_token)?;
+            Ok(())
+        })
         .map_err(storage_error_to_response)?;
-    if let Err(error) =
-        replace_profile_sources(state.database.as_ref(), &profile.id, &payload.source_ids)
-    {
-        let _ = repository.delete(&profile.id);
-        return Err(storage_error_to_response(error));
-    }
-    if let Err(error) = persist_profile_routing_template_source(
-        state.database.as_ref(),
-        &profile.id,
-        routing_template_source_id.as_deref(),
-    ) {
-        let _ = repository.delete(&profile.id);
-        return Err(storage_error_to_response(error));
-    }
-    let engine = Engine::new(
-        state.database.as_ref(),
-        &state.plugins_dir,
-        Arc::clone(&state.secret_store),
-    );
-    let export_token = match engine.ensure_profile_export_token(&profile.id) {
-        Ok(token) => token,
-        Err(error) => {
-            let settings_repository = SettingsRepository::new(state.database.as_ref());
-            let _ = settings_repository.delete(&profile_routing_template_source_key(&profile.id));
-            let _ = repository.delete(&profile.id);
-            return Err(core_error_to_response(error));
-        }
-    };
 
     emit_event(
         &state,
@@ -128,20 +111,21 @@ pub(crate) async fn update_profile_handler(
     }
     profile.routing_template_source_id = routing_template_source_id.clone();
     profile.updated_at = current_timestamp_rfc3339().map_err(|_| internal_error_response())?;
-    repository
-        .update(&profile)
+    state
+        .database
+        .with_transaction(|tx| {
+            update_profile_in_transaction(tx, &profile)?;
+            if replace_sources {
+                replace_profile_sources_in_transaction(tx, &id, &source_ids)?;
+            }
+            persist_profile_routing_template_source_in_transaction(
+                tx,
+                &id,
+                routing_template_source_id.as_deref(),
+            )?;
+            Ok(())
+        })
         .map_err(storage_error_to_response)?;
-
-    if replace_sources {
-        replace_profile_sources(state.database.as_ref(), &id, &source_ids)
-            .map_err(storage_error_to_response)?;
-    }
-    persist_profile_routing_template_source(
-        state.database.as_ref(),
-        &id,
-        routing_template_source_id.as_deref(),
-    )
-    .map_err(storage_error_to_response)?;
 
     state.profile_cache.invalidate(&id);
     let profile_dto = build_profile_dto(state.database.as_ref(), profile, source_ids)?;
@@ -229,4 +213,123 @@ pub(crate) async fn refresh_profile_handler(
             node_count,
         }),
     ))
+}
+
+fn generate_export_token() -> Result<String, getrandom::Error> {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes)?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn insert_profile_in_transaction(
+    tx: &rusqlite::Transaction<'_>,
+    profile: &Profile,
+) -> app_storage::StorageResult<()> {
+    tx.execute(
+        "INSERT INTO profiles
+         (id, name, description, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![
+            profile.id,
+            profile.name,
+            profile.description,
+            profile.created_at,
+            profile.updated_at
+        ],
+    )?;
+    Ok(())
+}
+
+fn update_profile_in_transaction(
+    tx: &rusqlite::Transaction<'_>,
+    profile: &Profile,
+) -> app_storage::StorageResult<usize> {
+    let affected = tx.execute(
+        "UPDATE profiles
+         SET name = ?1, description = ?2, updated_at = ?3
+         WHERE id = ?4",
+        rusqlite::params![
+            profile.name,
+            profile.description,
+            profile.updated_at,
+            profile.id
+        ],
+    )?;
+    Ok(affected)
+}
+
+fn replace_profile_sources_in_transaction(
+    tx: &rusqlite::Transaction<'_>,
+    profile_id: &str,
+    source_ids: &[String],
+) -> app_storage::StorageResult<()> {
+    tx.execute(
+        "DELETE FROM profile_sources WHERE profile_id = ?1",
+        [profile_id],
+    )?;
+    for (index, source_id) in source_ids.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO profile_sources (profile_id, source_instance_id, priority)
+             VALUES (?1, ?2, ?3)",
+            rusqlite::params![profile_id, source_id, index as i64],
+        )?;
+    }
+    Ok(())
+}
+
+fn persist_profile_routing_template_source_in_transaction(
+    tx: &rusqlite::Transaction<'_>,
+    profile_id: &str,
+    routing_template_source_id: Option<&str>,
+) -> app_storage::StorageResult<()> {
+    let key = profile_routing_template_source_key(profile_id);
+    match routing_template_source_id {
+        Some(source_id) => {
+            tx.execute(
+                "INSERT INTO app_settings (key, value, updated_at)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(key)
+                 DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                rusqlite::params![
+                    key,
+                    source_id,
+                    current_timestamp_rfc3339()
+                        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+                ],
+            )?;
+        }
+        None => {
+            tx.execute("DELETE FROM app_settings WHERE key = ?1", [key])?;
+        }
+    }
+    Ok(())
+}
+
+fn insert_profile_export_token_in_transaction(
+    tx: &rusqlite::Transaction<'_>,
+    profile_id: &str,
+    token: &str,
+) -> app_storage::StorageResult<()> {
+    let created_at =
+        current_timestamp_rfc3339().unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+    let id = format!(
+        "export-token-{}",
+        OffsetDateTime::now_utc().unix_timestamp_nanos()
+    );
+    tx.execute(
+        "INSERT INTO export_tokens (id, profile_id, token, token_type, created_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![
+            id,
+            profile_id,
+            token,
+            "primary",
+            created_at,
+            Option::<String>::None
+        ],
+    )?;
+    Ok(())
 }

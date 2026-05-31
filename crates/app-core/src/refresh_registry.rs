@@ -15,6 +15,10 @@ pub struct RefreshGuard {
 }
 
 impl RefreshRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     pub fn global() -> Self {
         static GLOBAL_REFRESH_REGISTRY: OnceLock<RefreshRegistry> = OnceLock::new();
         GLOBAL_REFRESH_REGISTRY
