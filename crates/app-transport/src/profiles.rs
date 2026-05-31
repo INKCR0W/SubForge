@@ -121,6 +121,8 @@ pub trait TransportProfile: Send + Sync + std::fmt::Debug {
     ) -> TransportResult<Client> {
         // 该路径用于插件脚本等不可信网络访问：在 reqwest connector 的 DNS
         // 解析点过滤真实连接地址，避免预解析检查与实际连接之间发生 DNS TOCTOU。
+        // 系统代理会把目标解析/连接外包给代理端，绕过本地 guarded resolver；
+        // 插件等不可信 HTTP 默认必须直连，未来若支持代理需对代理与 CONNECT 目标同等校验。
         build_client_with_settings(
             timeout,
             max_redirects,
@@ -128,7 +130,7 @@ pub trait TransportProfile: Send + Sync + std::fmt::Debug {
             self.uses_cookie_store(),
             redirect_policy,
             Some(is_forbidden_ip),
-            Client::builder(),
+            Client::builder().no_proxy(),
         )
     }
     fn build_client_with_guarded_dns_no_auto_decode(
@@ -140,7 +142,9 @@ pub trait TransportProfile: Send + Sync + std::fmt::Debug {
     ) -> TransportResult<Client> {
         // 订阅拉取仍需自行做 raw/decode 限制；该变体同时在连接层 DNS
         // 解析点过滤真实目标地址，覆盖脚本返回 subscription.url 的 TOCTOU 风险。
+        // 与上方 guarded DNS client 一样，必须禁用系统代理，避免代理端解析绕过本地 guard。
         let builder = Client::builder()
+            .no_proxy()
             .no_gzip()
             .no_brotli()
             .no_deflate()
