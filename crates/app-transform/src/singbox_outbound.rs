@@ -178,17 +178,37 @@ fn build_singbox_tls(node: &ProxyNode) -> Option<SingboxTls> {
         .or_else(|| optional_string(node, "sni"));
     let insecure = optional_bool(node, "skip_cert_verify");
     let alpn = optional_string_list(node, "alpn");
-    let has_fields =
-        server_name.is_some() || insecure.is_some() || alpn.is_some() || node.tls.enabled;
+    let utls = optional_string(node, "client_fingerprint").map(|fingerprint| SingboxUtls {
+        enabled: true,
+        fingerprint,
+    });
+    let is_reality = optional_string(node, "security")
+        .map(|security| security.eq_ignore_ascii_case("reality"))
+        .unwrap_or(false)
+        || optional_string(node, "reality_public_key").is_some();
+    let reality = is_reality.then(|| SingboxReality {
+        enabled: true,
+        public_key: optional_string(node, "reality_public_key"),
+        short_id: optional_string(node, "reality_short_id"),
+    });
+    let tls_enabled = node.tls.enabled || is_reality;
+    let has_fields = server_name.is_some()
+        || insecure.is_some()
+        || alpn.is_some()
+        || utls.is_some()
+        || reality.is_some()
+        || tls_enabled;
     if !has_fields {
         return None;
     }
 
     Some(SingboxTls {
-        enabled: node.tls.enabled,
+        enabled: tls_enabled,
         server_name,
         insecure,
         alpn,
+        utls,
+        reality,
     })
 }
 
@@ -250,6 +270,25 @@ pub(super) struct SingboxTls {
     pub(super) insecure: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) alpn: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) utls: Option<SingboxUtls>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) reality: Option<SingboxReality>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct SingboxUtls {
+    pub(super) enabled: bool,
+    pub(super) fingerprint: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct SingboxReality {
+    pub(super) enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) public_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) short_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

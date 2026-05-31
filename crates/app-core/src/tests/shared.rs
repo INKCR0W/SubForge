@@ -34,6 +34,8 @@ pub(super) const BASE64_SUBSCRIPTION_FIXTURE: &str =
     include_str!("../../tests/fixtures/subscription_base64.txt");
 pub(super) const NON_URI_CLASH_MIHOMO_FIXTURE: &str =
     include_str!("../../tests/fixtures/non_uri_clash_mihomo.yaml");
+pub(super) const NON_URI_CLASH_WITH_HEALTHCHECK_URL_FIXTURE: &str =
+    include_str!("../../tests/fixtures/non_uri_clash_with_healthcheck_url.yaml");
 pub(super) const NON_URI_SURGE_FIXTURE: &str =
     include_str!("../../tests/fixtures/non_uri_surge.conf");
 pub(super) const NON_URI_LOON_FIXTURE: &str =

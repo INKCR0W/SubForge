@@ -85,7 +85,7 @@ pub(crate) fn normalize_subscription_payload(payload: &str) -> String {
         .collect::<String>();
     if let Some(decoded) = try_decode_base64_text(&compact_base64) {
         let decoded_trimmed = decoded.trim();
-        if looks_like_uri_list(decoded_trimmed) {
+        if looks_like_uri_list(decoded_trimmed) || looks_like_non_uri_payload(decoded_trimmed) {
             return decoded_trimmed.to_string();
         }
     }
@@ -94,19 +94,72 @@ pub(crate) fn normalize_subscription_payload(payload: &str) -> String {
 }
 
 pub(crate) fn looks_like_uri_list(payload: &str) -> bool {
-    payload.contains("ss://")
-        || payload.contains("ssr://")
-        || payload.contains("vmess://")
-        || payload.contains("vless://")
-        || payload.contains("trojan://")
-        || payload.contains("hysteria2://")
-        || payload.contains("tuic://")
-        || payload.contains("anytls://")
-        || payload.contains("wireguard://")
-        || payload.contains("socks5://")
-        || payload.contains("socks5+tls://")
-        || payload.contains("http://")
-        || payload.contains("https://")
+    payload.lines().any(|raw_line| {
+        let line = raw_line.trim().trim_start_matches('\u{feff}');
+        !line.is_empty() && !line.starts_with('#') && starts_with_supported_proxy_uri(line)
+    })
+}
+
+fn starts_with_supported_proxy_uri(line: &str) -> bool {
+    [
+        "ss://",
+        "ssr://",
+        "vmess://",
+        "vless://",
+        "trojan://",
+        "hysteria2://",
+        "tuic://",
+        "anytls://",
+        "wireguard://",
+        "socks5://",
+        "socks5+tls://",
+        "http://",
+        "https://",
+    ]
+    .iter()
+    .any(|scheme| line.starts_with(scheme))
+}
+
+fn looks_like_non_uri_payload(payload: &str) -> bool {
+    let trimmed = payload.trim().trim_start_matches('\u{feff}');
+    if has_top_level_proxy_list_key(trimmed)
+        || (trimmed.starts_with('{') && trimmed.contains("\"proxies\""))
+    {
+        return true;
+    }
+
+    trimmed.lines().any(|raw_line| {
+        let line = raw_line.trim();
+        if line.is_empty()
+            || line.starts_with('#')
+            || line.starts_with(';')
+            || line.starts_with("//")
+            || (line.starts_with('[') && line.ends_with(']'))
+        {
+            return false;
+        }
+        let Some((_, value)) = line.split_once('=') else {
+            return false;
+        };
+        let proxy_type = value
+            .split(',')
+            .next()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        matches!(
+            proxy_type.as_str(),
+            "ss" | "shadowsocks" | "ssr" | "shadowsocksr" | "vmess" | "vless" | "trojan"
+        )
+    })
+}
+
+fn has_top_level_proxy_list_key(payload: &str) -> bool {
+    payload.lines().any(|line| {
+        let trimmed = line.trim_start_matches('\u{feff}');
+        !trimmed.starts_with(char::is_whitespace)
+            && (trimmed.starts_with("proxies:") || trimmed.starts_with("Proxy:"))
+    })
 }
 
 pub(crate) fn parse_proxy_uri_line(

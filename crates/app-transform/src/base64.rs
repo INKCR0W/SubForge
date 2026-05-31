@@ -171,12 +171,23 @@ fn build_vless_uri(node: &ProxyNode) -> TransformResult<String> {
     let uuid = required_string(node, "uuid")?;
     let mut params = Vec::<(String, String)>::new();
     push_query_param(&mut params, "encryption", Some("none".to_string()));
-    append_transport_params(node, &mut params);
-    if node.tls.enabled {
-        push_query_param(&mut params, "security", Some("tls".to_string()));
-    } else if let Some(security) = optional_string(node, "security") {
-        push_query_param(&mut params, "security", Some(security));
+    let security = optional_string(node, "security").or_else(|| {
+        if node.tls.enabled {
+            Some("tls".to_string())
+        } else {
+            None
+        }
+    });
+    let is_reality = security
+        .as_deref()
+        .map(|value| value.eq_ignore_ascii_case("reality"))
+        .unwrap_or(false);
+    if matches!(node.transport, ProxyTransport::Tcp) && is_reality {
+        push_query_param(&mut params, "type", Some("tcp".to_string()));
+    } else {
+        append_transport_params(node, &mut params);
     }
+    push_query_param(&mut params, "security", security);
     push_query_param(&mut params, "sni", node_server_name(node));
     push_query_param(&mut params, "flow", optional_string(node, "flow"));
     if optional_bool(node, "skip_cert_verify").unwrap_or(false) {
@@ -189,6 +200,21 @@ fn build_vless_uri(node: &ProxyNode) -> TransformResult<String> {
         &mut params,
         "fp",
         optional_string(node, "client_fingerprint"),
+    );
+    push_query_param(
+        &mut params,
+        "pbk",
+        optional_string(node, "reality_public_key"),
+    );
+    push_query_param(
+        &mut params,
+        "sid",
+        optional_string(node, "reality_short_id"),
+    );
+    push_query_param(
+        &mut params,
+        "spx",
+        optional_string(node, "reality_spider_x"),
     );
     Ok(build_uri_with_query(
         "vless",

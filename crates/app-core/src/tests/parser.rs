@@ -135,6 +135,86 @@ fn uri_list_parser_supports_non_uri_clash_mihomo_payload() {
 }
 
 #[test]
+fn uri_list_parser_does_not_treat_clash_healthcheck_url_as_uri_list() {
+    let parser = UriListParser;
+    let nodes = parser
+        .parse(
+            "source-non-uri-clash-healthcheck",
+            NON_URI_CLASH_WITH_HEALTHCHECK_URL_FIXTURE,
+        )
+        .expect("包含 http 健康检查 URL 的 Clash YAML 应走非 URI 解析");
+
+    assert_eq!(nodes.len(), 1);
+    let node = nodes
+        .iter()
+        .find(|node| node.name == "clash-http-metadata-node")
+        .expect("应解析 Clash YAML 中的 vmess 节点");
+    assert_eq!(node.protocol, ProxyProtocol::Vmess);
+    assert_eq!(node.server, "vmess-http-metadata.example.com");
+    assert_eq!(node.transport, ProxyTransport::Ws);
+    assert_eq!(
+        node.extra.get("host"),
+        Some(&Value::String("edge-http-metadata.example.com".to_string()))
+    );
+}
+
+#[test]
+fn uri_list_parser_decodes_base64_wrapped_non_uri_clash_payload() {
+    let parser = UriListParser;
+    let encoded = BASE64_STANDARD.encode(NON_URI_CLASH_MIHOMO_FIXTURE);
+    let nodes = parser
+        .parse("source-base64-non-uri-clash", &encoded)
+        .expect("Base64 包裹的 Clash/Mihomo 文本应解码后走非 URI 解析");
+
+    assert_eq!(nodes.len(), 2);
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node.name == "clash-ss-node" && node.protocol == ProxyProtocol::Ss)
+    );
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node.name == "clash-vmess-node" && node.protocol == ProxyProtocol::Vmess)
+    );
+}
+
+#[test]
+fn uri_list_parser_preserves_vless_reality_parameters() {
+    let parser = UriListParser;
+    let payload = "vless://dddddddd-dddd-dddd-dddd-dddddddddddd@reality.example.com:443?type=tcp&security=reality&sni=www.microsoft.com&fp=chrome&pbk=reality-public-key&sid=abcd1234&spx=%2Fgrpc&flow=xtls-rprx-vision#reality-node";
+    let nodes = parser
+        .parse("source-vless-reality", payload)
+        .expect("VLESS Reality 分享链接应解析成功");
+
+    assert_eq!(nodes.len(), 1);
+    let node = &nodes[0];
+    assert_eq!(node.protocol, ProxyProtocol::Vless);
+    assert!(node.tls.enabled);
+    assert_eq!(node.tls.server_name.as_deref(), Some("www.microsoft.com"));
+    assert_eq!(
+        node.extra.get("security"),
+        Some(&Value::String("reality".to_string()))
+    );
+    assert_eq!(
+        node.extra.get("client_fingerprint"),
+        Some(&Value::String("chrome".to_string()))
+    );
+    assert_eq!(
+        node.extra.get("reality_public_key"),
+        Some(&Value::String("reality-public-key".to_string()))
+    );
+    assert_eq!(
+        node.extra.get("reality_short_id"),
+        Some(&Value::String("abcd1234".to_string()))
+    );
+    assert_eq!(
+        node.extra.get("reality_spider_x"),
+        Some(&Value::String("/grpc".to_string()))
+    );
+}
+
+#[test]
 fn uri_list_parser_supports_non_uri_surge_loon_qx_payloads() {
     let parser = UriListParser;
 

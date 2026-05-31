@@ -67,6 +67,24 @@ pub(crate) fn parse_vless_uri(
         "client_fingerprint",
         query_value(&query_pairs, &["fp", "fingerprint"]),
     );
+    insert_optional_string(
+        &mut extra,
+        "reality_public_key",
+        query_value(
+            &query_pairs,
+            &["pbk", "publicKey", "public_key", "public-key"],
+        ),
+    );
+    insert_optional_string(
+        &mut extra,
+        "reality_short_id",
+        query_value(&query_pairs, &["sid", "shortId", "short_id", "short-id"]),
+    );
+    insert_optional_string(
+        &mut extra,
+        "reality_spider_x",
+        query_value(&query_pairs, &["spx", "spiderX", "spider_x", "spider-x"]),
+    );
     insert_optional_bool(
         &mut extra,
         "skip_cert_verify",

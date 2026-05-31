@@ -461,6 +461,113 @@ fn snapshot_vless_share_link_base64() {
 }
 
 #[test]
+fn vless_reality_parameters_roundtrip_to_share_link_clash_and_singbox() {
+    let node = build_node(
+        "VLESS-Reality",
+        ProxyProtocol::Vless,
+        ProxyTransport::Tcp,
+        Some("us"),
+        vec![
+            (
+                "uuid",
+                Value::String("dddddddd-dddd-dddd-dddd-dddddddddddd".to_string()),
+            ),
+            ("security", Value::String("reality".to_string())),
+            ("flow", Value::String("xtls-rprx-vision".to_string())),
+            ("client_fingerprint", Value::String("chrome".to_string())),
+            (
+                "reality_public_key",
+                Value::String("reality-public-key".to_string()),
+            ),
+            ("reality_short_id", Value::String("abcd1234".to_string())),
+            ("reality_spider_x", Value::String("/grpc".to_string())),
+        ],
+    );
+
+    let share_uri = super::base64::build_share_uri(&node).expect("构建 VLESS Reality URI 失败");
+    assert_eq!(
+        share_uri,
+        "vless://dddddddd-dddd-dddd-dddd-dddddddddddd@vless-reality.example.com:443?encryption=none&type=tcp&security=reality&sni=tls.example.com&flow=xtls-rprx-vision&fp=chrome&pbk=reality-public-key&sid=abcd1234&spx=%2Fgrpc#VLESS-Reality"
+    );
+
+    let clash_yaml = ClashTransformer::default()
+        .transform(&[node.clone()], &test_profile())
+        .expect("转换 Clash YAML 失败");
+    let clash_value: Value = serde_yaml::from_str(&clash_yaml).expect("Clash YAML 应合法");
+    let clash_proxy = clash_value
+        .get("proxies")
+        .and_then(Value::as_array)
+        .and_then(|proxies| proxies.first())
+        .expect("Clash 输出应包含代理节点");
+    assert_eq!(
+        clash_proxy
+            .get("reality-opts")
+            .and_then(Value::as_object)
+            .and_then(|opts| opts.get("public-key"))
+            .and_then(Value::as_str),
+        Some("reality-public-key")
+    );
+    assert_eq!(
+        clash_proxy
+            .get("reality-opts")
+            .and_then(Value::as_object)
+            .and_then(|opts| opts.get("short-id"))
+            .and_then(Value::as_str),
+        Some("abcd1234")
+    );
+    assert_eq!(
+        clash_proxy
+            .get("reality-opts")
+            .and_then(Value::as_object)
+            .and_then(|opts| opts.get("spider-x"))
+            .and_then(Value::as_str),
+        Some("/grpc")
+    );
+
+    let singbox_json = SingboxTransformer::default()
+        .transform(&[node], &test_profile())
+        .expect("转换 sing-box JSON 失败");
+    let singbox_value: Value = serde_json::from_str(&singbox_json).expect("sing-box JSON 应合法");
+    let vless_outbound = singbox_value
+        .get("outbounds")
+        .and_then(Value::as_array)
+        .and_then(|outbounds| {
+            outbounds
+                .iter()
+                .find(|outbound| outbound.get("type").and_then(Value::as_str) == Some("vless"))
+        })
+        .expect("sing-box 输出应包含 VLESS outbound");
+    let tls = vless_outbound
+        .get("tls")
+        .and_then(Value::as_object)
+        .expect("VLESS Reality outbound 应包含 tls");
+    assert_eq!(
+        tls.get("utls")
+            .and_then(|utls| utls.get("fingerprint"))
+            .and_then(Value::as_str),
+        Some("chrome")
+    );
+    assert_eq!(
+        tls.get("reality")
+            .and_then(|reality| reality.get("enabled"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        tls.get("reality")
+            .and_then(|reality| reality.get("public_key"))
+            .and_then(Value::as_str),
+        Some("reality-public-key")
+    );
+    assert_eq!(
+        tls.get("reality")
+            .and_then(|reality| reality.get("short_id"))
+            .and_then(Value::as_str),
+        Some("abcd1234")
+    );
+}
+
+#[test]
 fn snapshot_trojan_share_link_base64() {
     assert_base64_snapshot(
         build_node(

@@ -275,6 +275,8 @@ pub(super) struct ClashProxy {
     skip_cert_verify: Option<bool>,
     #[serde(rename = "client-fingerprint", skip_serializing_if = "Option::is_none")]
     client_fingerprint: Option<String>,
+    #[serde(rename = "reality-opts", skip_serializing_if = "Option::is_none")]
+    reality_opts: Option<ClashRealityOptions>,
     #[serde(rename = "ws-opts", skip_serializing_if = "Option::is_none")]
     ws_opts: Option<ClashWsOptions>,
     #[serde(rename = "grpc-opts", skip_serializing_if = "Option::is_none")]
@@ -328,6 +330,16 @@ pub(super) struct ClashWsOptions {
         skip_serializing_if = "Option::is_none"
     )]
     early_data_header_name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct ClashRealityOptions {
+    #[serde(rename = "public-key", skip_serializing_if = "Option::is_none")]
+    public_key: Option<String>,
+    #[serde(rename = "short-id", skip_serializing_if = "Option::is_none")]
+    short_id: Option<String>,
+    #[serde(rename = "spider-x", skip_serializing_if = "Option::is_none")]
+    spider_x: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

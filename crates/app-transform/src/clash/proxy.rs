@@ -1,6 +1,8 @@
 use app_common::{ProxyNode, ProxyProtocol, ProxyTransport};
 
-use crate::clash::{ClashGrpcOptions, ClashH2Options, ClashProxy, ClashWsOptions};
+use crate::clash::{
+    ClashGrpcOptions, ClashH2Options, ClashProxy, ClashRealityOptions, ClashWsOptions,
+};
 use crate::shared::{
     clash_network, optional_bool, optional_string, optional_string_list, optional_u32,
     required_string,
@@ -39,6 +41,7 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
         flow: None,
         skip_cert_verify,
         client_fingerprint: optional_string(node, "client_fingerprint"),
+        reality_opts: None,
         ws_opts,
         grpc_opts,
         h2_opts,
@@ -114,6 +117,7 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
             proxy.uuid = Some(required_string(node, "uuid")?);
             proxy.network = network;
             proxy.flow = optional_string(node, "flow");
+            proxy.reality_opts = build_reality_options(node);
             proxy.alter_id = None;
             proxy.cipher = None;
             proxy.obfs = None;
@@ -347,6 +351,21 @@ pub(super) fn build_clash_proxy(node: &ProxyNode) -> TransformResult<ClashProxy>
     }
 
     Ok(proxy)
+}
+
+fn build_reality_options(node: &ProxyNode) -> Option<ClashRealityOptions> {
+    let public_key = optional_string(node, "reality_public_key");
+    let short_id = optional_string(node, "reality_short_id");
+    let spider_x = optional_string(node, "reality_spider_x");
+    if public_key.is_none() && short_id.is_none() && spider_x.is_none() {
+        return None;
+    }
+
+    Some(ClashRealityOptions {
+        public_key,
+        short_id,
+        spider_x,
+    })
 }
 
 fn build_ws_options(node: &ProxyNode) -> Option<ClashWsOptions> {

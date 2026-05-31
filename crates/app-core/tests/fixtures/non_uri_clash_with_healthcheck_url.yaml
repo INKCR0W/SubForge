@@ -1,0 +1,20 @@
+proxies:
+  - name: clash-http-metadata-node
+    type: vmess
+    server: vmess-http-metadata.example.com
+    port: 443
+    uuid: 33333333-3333-3333-3333-333333333333
+    network: ws
+    tls: true
+    sni: vmess-http-metadata.example.com
+    ws-opts:
+      path: /websocket
+      headers:
+        Host: edge-http-metadata.example.com
+proxy-groups:
+  - name: Auto
+    type: url-test
+    proxies:
+      - clash-http-metadata-node
+    url: http://www.gstatic.com/generate_204
+    interval: 300
