@@ -11,4 +11,5 @@ pub use loader::{LoadedPlugin, PluginLoader};
 pub use lua_sandbox::{
     LuaSandbox, LuaSandboxConfig, RuntimeLogLevel, RuntimeLogSink,
     ensure_http_target_allowed_for_plugin, http_target_redirect_policy_for_plugin,
+    is_forbidden_http_target_ip_for_plugin,
 };

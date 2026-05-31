@@ -216,3 +216,27 @@ async fn safe_resolver_rejects_forbidden_resolution_results() {
         "错误信息应说明被 DNS guard 拦截：{error}"
     );
 }
+
+#[tokio::test]
+async fn guarded_dns_no_auto_decode_rejects_forbidden_resolution_results() {
+    let client = StandardProfile::default()
+        .build_client_with_guarded_dns_no_auto_decode(Duration::from_secs(1), 0, None, |ip| {
+            ip.is_loopback()
+                || match ip {
+                    std::net::IpAddr::V4(v4) => v4.is_private(),
+                    std::net::IpAddr::V6(_) => false,
+                }
+        })
+        .expect("带安全 DNS guard 且禁用自动解压的客户端应可构建");
+
+    let error = client
+        .get("http://localhost/")
+        .send()
+        .await
+        .expect_err("localhost 解析到 loopback 时应在 connector DNS 阶段被拦截");
+
+    assert!(
+        format!("{error:?}").contains("目标地址不允许"),
+        "错误信息应说明被 DNS guard 拦截：{error}"
+    );
+}

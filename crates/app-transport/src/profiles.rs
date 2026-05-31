@@ -131,6 +131,30 @@ pub trait TransportProfile: Send + Sync + std::fmt::Debug {
             Client::builder(),
         )
     }
+    fn build_client_with_guarded_dns_no_auto_decode(
+        &self,
+        timeout: Duration,
+        max_redirects: usize,
+        redirect_policy: Option<Policy>,
+        is_forbidden_ip: fn(IpAddr) -> bool,
+    ) -> TransportResult<Client> {
+        // 订阅拉取仍需自行做 raw/decode 限制；该变体同时在连接层 DNS
+        // 解析点过滤真实目标地址，覆盖脚本返回 subscription.url 的 TOCTOU 风险。
+        let builder = Client::builder()
+            .no_gzip()
+            .no_brotli()
+            .no_deflate()
+            .no_zstd();
+        build_client_with_settings(
+            timeout,
+            max_redirects,
+            self.default_user_agent(),
+            self.uses_cookie_store(),
+            redirect_policy,
+            Some(is_forbidden_ip),
+            builder,
+        )
+    }
     fn request_delay(&self) -> Duration;
     fn default_headers(&self) -> &[(&'static str, &'static str)] {
         &EMPTY_HEADER_TEMPLATE

@@ -25,6 +25,7 @@ use runtime_apis::{RuntimeApiState, new_cookie_store, register_runtime_apis};
 
 pub use runtime_apis::{
     ensure_http_target_allowed_for_plugin, http_target_redirect_policy_for_plugin,
+    is_forbidden_http_target_ip_for_plugin,
 };
 
 const DEFAULT_MEMORY_LIMIT_BYTES: usize = 64 * 1024 * 1024;

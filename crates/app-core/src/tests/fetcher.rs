@@ -274,6 +274,77 @@ async fn static_fetcher_stops_streaming_chunked_body_when_limit_is_exceeded() {
         .expect("chunked 测试服务任务异常退出");
 }
 
+#[tokio::test]
+async fn static_fetcher_with_redirect_policy_blocks_loopback_dns_before_request() {
+    let db = Database::open_in_memory().expect("内存数据库初始化失败");
+    let source = sample_source(
+        "source-fetch-script-url-dns-guard",
+        "vendor.example.script-url",
+    );
+    SourceRepository::new(&db)
+        .insert(&source)
+        .expect("写入测试 source 失败");
+
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let app = Router::new().route(
+        "/sub",
+        get({
+            let request_count = Arc::clone(&request_count);
+            move || {
+                let request_count = Arc::clone(&request_count);
+                async move {
+                    request_count.fetch_add(1, Ordering::SeqCst);
+                    (
+                        StatusCode::OK,
+                        [(
+                            axum::http::header::CONTENT_TYPE,
+                            "text/plain; charset=utf-8",
+                        )],
+                        "ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@example.com:443#dns-guard-bypass",
+                    )
+                }
+            }
+        }),
+    );
+    let listener = TcpListener::bind("localhost:0")
+        .await
+        .expect("启动测试 HTTP 服务失败");
+    let port = listener.local_addr().expect("读取监听地址失败").port();
+    let server_task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("测试 HTTP 服务运行失败");
+    });
+
+    let fetcher = StaticFetcher::new_with_redirect_policy(
+        &db,
+        Some(app_plugin_runtime::http_target_redirect_policy_for_plugin(
+            5,
+        )),
+    )
+    .expect("初始化脚本订阅 URL StaticFetcher 失败");
+    let error = fetcher
+        .fetch_and_cache(&source.id, &format!("http://localhost:{port}/sub"), None)
+        .await
+        .expect_err("脚本订阅 URL 下载必须在连接层 DNS 解析到 loopback 时失败");
+
+    assert!(matches!(error, CoreError::SubscriptionFetch(_)));
+    assert_eq!(
+        request_count.load(Ordering::SeqCst),
+        0,
+        "连接层 DNS guard 应在发起 HTTP 请求前拦截 loopback 地址"
+    );
+    assert!(
+        NodeCacheRepository::new(&db)
+            .get_by_source(&source.id)
+            .expect("查询 node_cache 失败")
+            .is_none(),
+        "连接层 DNS guard 拦截后不得写入 node_cache"
+    );
+
+    server_task.abort();
+}
+
 #[test]
 fn static_fetcher_extracts_and_persists_clash_routing_template() {
     let db = Database::open_in_memory().expect("内存数据库初始化失败");

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use app_common::ProxyNode;
+use app_plugin_runtime::is_forbidden_http_target_ip_for_plugin;
 use app_storage::{Database, NodeCacheRepository, SourceRepository};
 use app_transport::{NetworkProfileFactory, TransportProfile};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, USER_AGENT};
@@ -47,11 +48,12 @@ impl<'a> StaticFetcher<'a, UriListParser> {
         db: &'a Database,
         redirect_policy: Option<Policy>,
     ) -> CoreResult<Self> {
-        Self::with_parser_network_profile_and_redirect_policy(
+        Self::with_parser_network_profile_redirect_policy_and_guarded_dns(
             db,
             UriListParser,
             "standard",
             redirect_policy,
+            true,
         )
     }
 
@@ -82,12 +84,37 @@ where
         network_profile: &str,
         redirect_policy: Option<Policy>,
     ) -> CoreResult<Self> {
-        let transport_profile = NetworkProfileFactory::create(network_profile)?;
-        let client = transport_profile.build_client_with_limits_no_auto_decode(
-            transport_profile.timeout(),
-            transport_profile.max_redirects(),
+        Self::with_parser_network_profile_redirect_policy_and_guarded_dns(
+            db,
+            parser,
+            network_profile,
             redirect_policy,
-        )?;
+            false,
+        )
+    }
+
+    fn with_parser_network_profile_redirect_policy_and_guarded_dns(
+        db: &'a Database,
+        parser: P,
+        network_profile: &str,
+        redirect_policy: Option<Policy>,
+        use_guarded_dns: bool,
+    ) -> CoreResult<Self> {
+        let transport_profile = NetworkProfileFactory::create(network_profile)?;
+        let client = if use_guarded_dns {
+            transport_profile.build_client_with_guarded_dns_no_auto_decode(
+                transport_profile.timeout(),
+                transport_profile.max_redirects(),
+                redirect_policy,
+                is_forbidden_http_target_ip_for_plugin,
+            )?
+        } else {
+            transport_profile.build_client_with_limits_no_auto_decode(
+                transport_profile.timeout(),
+                transport_profile.max_redirects(),
+                redirect_policy,
+            )?
+        };
 
         Ok(Self {
             db,

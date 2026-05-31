@@ -28,6 +28,10 @@ pub fn http_target_redirect_policy_for_plugin(max_redirects: usize) -> Policy {
     redirect_policy(max_redirects)
 }
 
+pub fn is_forbidden_http_target_ip_for_plugin(ip: IpAddr) -> bool {
+    is_forbidden_ip(ip)
+}
+
 fn plugin_runtime_error_to_lua_error(error: PluginRuntimeError) -> LuaError {
     match error {
         PluginRuntimeError::ScriptRuntime(message) => LuaError::runtime(message),
