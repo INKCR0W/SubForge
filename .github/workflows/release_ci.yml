@@ -94,6 +94,27 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - name: Verify pnpm overrides configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(pnpm config get overrides --json 2>&1)"
+          if grep -Fq 'field in package.json is no longer read by pnpm' <<<"$output"; then
+            echo "$output"
+            exit 1
+          fi
+          node - "$output" <<'NODE'
+          const overrides = JSON.parse(process.argv[2]);
+          const expected = {
+            esbuild: "^0.25.0",
+            "vitepress>vite": "6.4.2",
+          };
+          for (const [name, version] of Object.entries(expected)) {
+            if (overrides[name] !== version) {
+              throw new Error(`pnpm override ${name} expected ${version}, got ${overrides[name] ?? "<missing>"}`);
+            }
+          }
+          NODE
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
       - name: Desktop frontend tests
