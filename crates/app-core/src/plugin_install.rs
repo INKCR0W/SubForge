@@ -7,7 +7,7 @@ use app_storage::{Database, PluginRepository};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use crate::utils::copy_dir_recursive;
+use crate::utils::{atomic_install_dir_paths, copy_dir_recursive};
 use crate::{CoreError, CoreResult};
 
 #[derive(Debug)]
@@ -32,26 +32,29 @@ impl<'a> PluginInstallService<'a> {
         let existing_plugin = repository.get_by_plugin_id(&loaded.manifest.plugin_id)?;
 
         fs::create_dir_all(&self.plugins_dir)?;
-        let target_dir = self.plugins_dir.join(&loaded.manifest.plugin_id);
-        if let Some(existing) = existing_plugin {
+        let nonce = OffsetDateTime::now_utc().unix_timestamp_nanos().to_string();
+        let (target_dir, temp_dir, backup_dir) =
+            atomic_install_dir_paths(&self.plugins_dir, &loaded.manifest.plugin_id, &nonce);
+        if let Some(existing) = &existing_plugin {
             if existing.version == loaded.manifest.version {
                 return Err(CoreError::PluginAlreadyInstalled(
                     loaded.manifest.plugin_id.clone(),
                 ));
             }
-
-            if target_dir.exists() {
-                fs::remove_dir_all(&target_dir)?;
-            }
-            repository.delete(&existing.id)?;
-        }
-
-        if target_dir.exists() {
+        } else if target_dir.exists() {
             return Err(CoreError::PluginAlreadyInstalled(
                 loaded.manifest.plugin_id.clone(),
             ));
         }
-        copy_dir_recursive(&loaded.root_dir, &target_dir)?;
+
+        cleanup_staging_dir(&temp_dir)?;
+        cleanup_staging_dir(&backup_dir)?;
+        copy_dir_recursive(&loaded.root_dir, &temp_dir).inspect_err(|_| {
+            let _ = fs::remove_dir_all(&temp_dir);
+        })?;
+        self.loader.load_from_dir(&temp_dir).inspect_err(|_| {
+            let _ = fs::remove_dir_all(&temp_dir);
+        })?;
 
         let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
         let plugin = Plugin {
@@ -70,11 +73,112 @@ impl<'a> PluginInstallService<'a> {
             updated_at: now,
         };
 
-        if let Err(error) = repository.insert(&plugin) {
-            let _ = fs::remove_dir_all(&target_dir);
-            return Err(error.into());
-        }
+        if let Some(existing) = &existing_plugin {
+            atomic_upgrade_plugin_dir(
+                &target_dir,
+                &temp_dir,
+                &backup_dir,
+                || {
+                    repository.replace_by_plugin_id(&plugin)?;
+                    Ok(())
+                },
+                || {
+                    repository.replace_by_plugin_id(existing)?;
+                    Ok(())
+                },
+            )
+        } else {
+            atomic_install_new_plugin_dir(&target_dir, &temp_dir, || {
+                repository.insert(&plugin)?;
+                Ok(())
+            })
+        }?;
 
         Ok(plugin)
     }
+}
+
+fn cleanup_staging_dir(path: &Path) -> CoreResult<()> {
+    if path.exists() {
+        fs::remove_dir_all(path)?;
+    }
+    Ok(())
+}
+
+fn atomic_install_new_plugin_dir(
+    target_dir: &Path,
+    temp_dir: &Path,
+    update_database: impl FnOnce() -> CoreResult<()>,
+) -> CoreResult<()> {
+    if target_dir.exists() {
+        let _ = fs::remove_dir_all(temp_dir);
+        return Err(CoreError::PluginAlreadyInstalled(
+            target_dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_string(),
+        ));
+    }
+
+    fs::rename(temp_dir, target_dir)?;
+    if let Err(error) = update_database() {
+        let _ = fs::remove_dir_all(target_dir);
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn atomic_upgrade_plugin_dir(
+    target_dir: &Path,
+    temp_dir: &Path,
+    backup_dir: &Path,
+    update_database: impl FnOnce() -> CoreResult<()>,
+    rollback_database: impl FnOnce() -> CoreResult<()>,
+) -> CoreResult<()> {
+    if let Err(error) = fs::rename(target_dir, backup_dir) {
+        let _ = fs::remove_dir_all(temp_dir);
+        return Err(error.into());
+    }
+
+    if let Err(error) = fs::rename(temp_dir, target_dir) {
+        let _ = fs::remove_dir_all(temp_dir);
+        let restore_result = fs::rename(backup_dir, target_dir);
+        if let Err(restore_error) = restore_result {
+            return Err(CoreError::Io(std::io::Error::new(
+                restore_error.kind(),
+                format!(
+                    "插件目录升级失败且旧目录恢复失败；升级错误：{error}；恢复错误：{restore_error}"
+                ),
+            )));
+        }
+        return Err(error.into());
+    }
+
+    if let Err(error) = update_database() {
+        let _ = fs::remove_dir_all(target_dir);
+        restore_backup_dir(target_dir, backup_dir)?;
+        return Err(error);
+    }
+
+    if let Err(error) = fs::remove_dir_all(backup_dir) {
+        let rollback_database_result = rollback_database();
+        let _ = fs::remove_dir_all(target_dir);
+        let restore_result = restore_backup_dir(target_dir, backup_dir);
+        rollback_database_result?;
+        restore_result?;
+        return Err(error.into());
+    }
+
+    Ok(())
+}
+
+fn restore_backup_dir(target_dir: &Path, backup_dir: &Path) -> CoreResult<()> {
+    if target_dir.exists() {
+        fs::remove_dir_all(target_dir)?;
+    }
+    if backup_dir.exists() {
+        fs::rename(backup_dir, target_dir)?;
+    }
+    Ok(())
 }

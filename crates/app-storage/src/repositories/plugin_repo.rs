@@ -35,6 +35,38 @@ impl<'a> PluginRepository<'a> {
         })
     }
 
+    pub fn replace_by_plugin_id(&self, plugin: &Plugin) -> StorageResult<()> {
+        self.db.with_connection(|connection| {
+            let tx = connection.transaction()?;
+            let affected = tx.execute(
+                "DELETE FROM plugins
+                 WHERE plugin_id = ?1",
+                [plugin.plugin_id.as_str()],
+            )?;
+            if affected == 0 {
+                return Err(StorageError::Sqlite(rusqlite::Error::QueryReturnedNoRows));
+            }
+            tx.execute(
+                "INSERT INTO plugins
+                 (id, plugin_id, name, version, spec_version, type, status, installed_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    plugin.id,
+                    plugin.plugin_id,
+                    plugin.name,
+                    plugin.version,
+                    plugin.spec_version,
+                    plugin.plugin_type,
+                    plugin.status,
+                    plugin.installed_at,
+                    plugin.updated_at
+                ],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+    }
+
     pub fn get_by_id(&self, id: &str) -> StorageResult<Option<Plugin>> {
         self.db.with_connection(|connection| {
             connection

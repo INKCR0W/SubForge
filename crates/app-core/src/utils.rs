@@ -1,6 +1,6 @@
 ﻿use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use app_common::ConfigSchemaProperty;
 use app_plugin_runtime::LoadedPlugin;
@@ -250,4 +250,16 @@ pub(crate) fn copy_dir_recursive(source: &Path, target: &Path) -> CoreResult<()>
         }
     }
     Ok(())
+}
+
+pub(crate) fn atomic_install_dir_paths(
+    plugins_dir: &Path,
+    plugin_id: &str,
+    nonce: &str,
+) -> (PathBuf, PathBuf, PathBuf) {
+    (
+        plugins_dir.join(plugin_id),
+        plugins_dir.join(format!("{plugin_id}.tmp.{nonce}")),
+        plugins_dir.join(format!("{plugin_id}.backup.{nonce}")),
+    )
 }
