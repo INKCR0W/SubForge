@@ -46,7 +46,10 @@ export async function deleteSource(
 }
 
 export async function refreshSource(sourceId: string): Promise<RefreshSourceResponse> {
-  return requestJson<RefreshSourceResponse>("POST", `/api/sources/${sourceId}/refresh`);
+  return requestJson<RefreshSourceResponse>(
+    "POST",
+    `/api/sources/${encodeURIComponent(sourceId)}/refresh`,
+  );
 }
 
 export async function refreshAllSources(): Promise<RefreshAllSourcesResult> {

@@ -5,6 +5,25 @@ export const SECRET_PLACEHOLDER = "••••••";
 
 export type SourceFormMode = "create" | "edit";
 
+export function getFormConfigValidationMessage(
+  schema: ConfigSchema,
+  formConfig: Record<string, unknown>,
+): string | null {
+  for (const [fieldKey, property] of Object.entries(schema.properties)) {
+    const rawValue = formConfig[fieldKey];
+    const isEmpty = rawValue === undefined || rawValue === null || rawValue === "";
+    if (isEmpty) {
+      continue;
+    }
+
+    if (property.property_type === "integer" && !Number.isInteger(Number(rawValue))) {
+      return `${fieldKey} 必须是整数`;
+    }
+  }
+
+  return null;
+}
+
 export function normalizeFormConfigForSubmit(
   schema: ConfigSchema,
   secretFields: string[],
@@ -18,12 +37,13 @@ export function normalizeFormConfigForSubmit(
 
   for (const [fieldKey, property] of Object.entries(schema.properties)) {
     const rawValue = formConfig[fieldKey];
-    if (secretFieldSet.has(fieldKey) && keptSecretSet.has(fieldKey) && !rawValue) {
+    const isEmpty = rawValue === undefined || rawValue === null || rawValue === "";
+    if (secretFieldSet.has(fieldKey) && keptSecretSet.has(fieldKey) && isEmpty) {
       result[fieldKey] = SECRET_PLACEHOLDER;
       continue;
     }
 
-    if (rawValue === undefined || rawValue === null || rawValue === "") {
+    if (isEmpty) {
       if (property.default !== undefined) {
         result[fieldKey] = property.default;
       } else if (requiredSet.has(fieldKey) && property.property_type === "boolean") {
@@ -37,7 +57,11 @@ export function normalizeFormConfigForSubmit(
     }
 
     if (property.property_type === "integer") {
-      result[fieldKey] = Math.trunc(Number(rawValue));
+      const integerValue = Number(rawValue);
+      if (!Number.isInteger(integerValue)) {
+        throw new Error(`${fieldKey} 必须是整数`);
+      }
+      result[fieldKey] = integerValue;
       continue;
     }
 

@@ -95,7 +95,10 @@ export async function fetchPluginSchema(
 }
 
 export async function deletePlugin(pluginId: string): Promise<PluginRecord> {
-  return requestJson<PluginRecord>("DELETE", `/api/plugins/${pluginId}`);
+  return requestJson<PluginRecord>(
+    "DELETE",
+    `/api/plugins/${encodeURIComponent(pluginId)}`,
+  );
 }
 
 export async function importPluginZip(file: File): Promise<PluginRecord> {

@@ -12,6 +12,7 @@ import { SourceListCard } from "./source-list-card";
 import { useSourceActions } from "./use-source-actions";
 import {
   buildInitialFormConfig,
+  getFormConfigValidationMessage,
   normalizeFormConfigForSubmit,
   type SourceFormMode,
 } from "./utils";
@@ -131,12 +132,17 @@ export default function SourcesPage() {
       });
   }, [pluginSchemaQuery.data]);
 
+  const formConfigValidationMessage = pluginSchemaQuery.data
+    ? getFormConfigValidationMessage(pluginSchemaQuery.data.schema, formConfig)
+    : null;
+
   const submitDisabled =
     createMutation.isPending ||
     updateMutation.isPending ||
     !pluginSchemaQuery.data ||
     !formPluginId ||
-    !formName.trim();
+    !formName.trim() ||
+    formConfigValidationMessage !== null;
 
   const handleSubmit = () => {
     const schemaPayload = pluginSchemaQuery.data;
@@ -264,6 +270,7 @@ export default function SourcesPage() {
         fields={fields}
         formConfig={formConfig}
         keptSecretFields={keptSecretFields}
+        validationMessage={formConfigValidationMessage}
         submitDisabled={submitDisabled}
         submitting={createMutation.isPending || updateMutation.isPending}
         onPluginIdChange={handlePluginIdChange}

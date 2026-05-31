@@ -15,6 +15,7 @@ type SourceFormCardProps = {
   fields: Array<{ key: string; property: ConfigSchemaProperty }>;
   formConfig: Record<string, unknown>;
   keptSecretFields: string[];
+  validationMessage?: string | null;
   submitDisabled: boolean;
   submitting: boolean;
   onPluginIdChange: (pluginId: string) => void;
@@ -36,6 +37,7 @@ export function SourceFormCard({
   fields,
   formConfig,
   keptSecretFields,
+  validationMessage,
   submitDisabled,
   submitting,
   onPluginIdChange,
@@ -118,6 +120,10 @@ export function SourceFormCard({
             ))}
           </div>
         )}
+
+        {validationMessage ? (
+          <p className="text-xs text-[var(--warn-text)]">{validationMessage}</p>
+        ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
           <button
